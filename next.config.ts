@@ -17,7 +17,6 @@ const nextConfig: NextConfig = {
     ],
   },
   // Production optimizations
-  output: 'standalone',
   compress: true,
   poweredByHeader: false,
   // Environment variables validation
