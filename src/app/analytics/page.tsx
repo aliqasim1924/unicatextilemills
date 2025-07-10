@@ -1,14 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { 
-  ChartBarIcon, 
-  TrendingUpIcon,
-  CalendarDaysIcon,
-  ClockIcon,
-  CurrencyDollarIcon,
-  CubeIcon,
-  UsersIcon,
   ArrowUpIcon,
   ArrowDownIcon
 } from '@heroicons/react/24/outline'
@@ -31,12 +24,53 @@ import {
   ResponsiveContainer
 } from 'recharts'
 
+interface OrderTrend {
+  date: string
+  orders: number
+  value: number
+  revenue: number
+}
+
+interface ProductionTrend {
+  date: string
+  weaving: number
+  coating: number
+  total: number
+}
+
+interface StockAnalysis {
+  name: string
+  current: number
+  minimum: number
+  value: number
+  count: number
+}
+
+interface CustomerAnalysis {
+  name: string
+  orders: number
+  value: number
+}
+
+interface PerformanceMetrics {
+  orderStatusDistribution: Array<{
+    name: string
+    value: number
+    color: string
+  }>
+  productionTypeDistribution: Array<{
+    name: string
+    value: number
+    color: string
+  }>
+}
+
 interface AnalyticsData {
-  orderTrends: any[]
-  productionTrends: any[]
-  stockAnalysis: any[]
-  customerAnalysis: any[]
-  performanceMetrics: any
+  orderTrends: OrderTrend[]
+  productionTrends: ProductionTrend[]
+  stockAnalysis: StockAnalysis[]
+  customerAnalysis: CustomerAnalysis[]
+  performanceMetrics: PerformanceMetrics
   kpis: {
     orderGrowth: number
     productionEfficiency: number
@@ -47,17 +81,66 @@ interface AnalyticsData {
   }
 }
 
+interface DatabaseOrder {
+  id: string
+  created_at: string
+  quantity_ordered: number
+  order_status: string
+  dispatch_date?: string
+  due_date?: string
+  customers?: {
+    name: string
+    contact_person?: string
+  }
+  finished_fabrics?: {
+    name: string
+    gsm: number
+    width_meters: number
+    color: string
+    coating_type: string
+  }
+}
+
+interface DatabaseProduction {
+  id: string
+  created_at: string
+  production_type: string
+  production_status: string
+}
+
+interface DatabaseStock {
+  id: string
+  stock_quantity?: number
+  stock_quantity_kg?: number
+  stock_quantity_liters?: number
+  minimum_stock?: number
+  minimum_stock_kg?: number
+  minimum_stock_liters?: number
+  total_value?: number
+}
+
+interface DatabaseMovement {
+  id: string
+  created_at: string
+}
+
+interface ProcessAnalyticsDataParams {
+  orders: DatabaseOrder[]
+  production: DatabaseProduction[]
+  baseStock: DatabaseStock[]
+  finishedStock: DatabaseStock[]
+  yarnStock: DatabaseStock[]
+  chemicalStock: DatabaseStock[]
+  stockMovements: DatabaseMovement[]
+  timeRange: number
+}
+
 export default function AnalyticsPage() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState('30') // days
-  const [selectedMetric, setSelectedMetric] = useState('orders')
 
-  useEffect(() => {
-    loadAnalyticsData()
-  }, [timeRange])
-
-  const loadAnalyticsData = async () => {
+  const loadAnalyticsData = useCallback(async () => {
     try {
       setLoading(true)
       const endDate = new Date()
@@ -117,9 +200,13 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [timeRange])
 
-  const processAnalyticsData = (data: any): AnalyticsData => {
+  useEffect(() => {
+    loadAnalyticsData()
+  }, [loadAnalyticsData])
+
+  const processAnalyticsData = (data: ProcessAnalyticsDataParams): AnalyticsData => {
     const { orders, production, baseStock, finishedStock, yarnStock, chemicalStock, stockMovements, timeRange } = data
 
     // Generate date range for trends
@@ -130,9 +217,9 @@ export default function AnalyticsPage() {
     })
 
     // Order trends
-    const orderTrends = dateRange.map(date => {
-      const dayOrders = orders.filter((o: any) => o.created_at.split('T')[0] === date)
-      const dayValue = dayOrders.reduce((sum: number, o: any) => sum + o.quantity_ordered, 0)
+    const orderTrends: OrderTrend[] = dateRange.map(date => {
+      const dayOrders = orders.filter((o: DatabaseOrder) => o.created_at.split('T')[0] === date)
+      const dayValue = dayOrders.reduce((sum: number, o: DatabaseOrder) => sum + o.quantity_ordered, 0)
       return {
         date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         orders: dayOrders.length,
@@ -142,10 +229,10 @@ export default function AnalyticsPage() {
     })
 
     // Production trends
-    const productionTrends = dateRange.map(date => {
-      const dayProduction = production.filter((p: any) => p.created_at.split('T')[0] === date)
-      const weavingCount = dayProduction.filter((p: any) => p.production_type === 'weaving').length
-      const coatingCount = dayProduction.filter((p: any) => p.production_type === 'coating').length
+    const productionTrends: ProductionTrend[] = dateRange.map(date => {
+      const dayProduction = production.filter((p: DatabaseProduction) => p.created_at.split('T')[0] === date)
+      const weavingCount = dayProduction.filter((p: DatabaseProduction) => p.production_type === 'weaving').length
+      const coatingCount = dayProduction.filter((p: DatabaseProduction) => p.production_type === 'coating').length
       return {
         date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         weaving: weavingCount,
@@ -155,39 +242,39 @@ export default function AnalyticsPage() {
     })
 
     // Stock analysis
-    const stockAnalysis = [
+    const stockAnalysis: StockAnalysis[] = [
       {
         name: 'Base Fabrics',
-        current: baseStock.reduce((sum: number, item: any) => sum + item.stock_quantity, 0),
-        minimum: baseStock.reduce((sum: number, item: any) => sum + item.minimum_stock, 0),
-        value: baseStock.reduce((sum: number, item: any) => sum + (item.stock_quantity * 10), 0),
+        current: baseStock.reduce((sum: number, item: DatabaseStock) => sum + (item.stock_quantity || 0), 0),
+        minimum: baseStock.reduce((sum: number, item: DatabaseStock) => sum + (item.minimum_stock || 0), 0),
+        value: baseStock.reduce((sum: number, item: DatabaseStock) => sum + ((item.stock_quantity || 0) * 10), 0),
         count: baseStock.length
       },
       {
         name: 'Finished Fabrics',
-        current: finishedStock.reduce((sum: number, item: any) => sum + item.stock_quantity, 0),
-        minimum: finishedStock.reduce((sum: number, item: any) => sum + item.minimum_stock, 0),
-        value: finishedStock.reduce((sum: number, item: any) => sum + (item.stock_quantity * 15), 0),
+        current: finishedStock.reduce((sum: number, item: DatabaseStock) => sum + (item.stock_quantity || 0), 0),
+        minimum: finishedStock.reduce((sum: number, item: DatabaseStock) => sum + (item.minimum_stock || 0), 0),
+        value: finishedStock.reduce((sum: number, item: DatabaseStock) => sum + ((item.stock_quantity || 0) * 15), 0),
         count: finishedStock.length
       },
       {
         name: 'Yarn Stock',
-        current: yarnStock.reduce((sum: number, item: any) => sum + item.stock_quantity_kg, 0),
-        minimum: yarnStock.reduce((sum: number, item: any) => sum + item.minimum_stock_kg, 0),
-        value: yarnStock.reduce((sum: number, item: any) => sum + (item.total_value || 0), 0),
+        current: yarnStock.reduce((sum: number, item: DatabaseStock) => sum + (item.stock_quantity_kg || 0), 0),
+        minimum: yarnStock.reduce((sum: number, item: DatabaseStock) => sum + (item.minimum_stock_kg || 0), 0),
+        value: yarnStock.reduce((sum: number, item: DatabaseStock) => sum + (item.total_value || 0), 0),
         count: yarnStock.length
       },
       {
         name: 'Chemical Stock',
-        current: chemicalStock.reduce((sum: number, item: any) => sum + item.stock_quantity_liters, 0),
-        minimum: chemicalStock.reduce((sum: number, item: any) => sum + item.minimum_stock_liters, 0),
-        value: chemicalStock.reduce((sum: number, item: any) => sum + (item.total_value || 0), 0),
+        current: chemicalStock.reduce((sum: number, item: DatabaseStock) => sum + (item.stock_quantity_liters || 0), 0),
+        minimum: chemicalStock.reduce((sum: number, item: DatabaseStock) => sum + (item.minimum_stock_liters || 0), 0),
+        value: chemicalStock.reduce((sum: number, item: DatabaseStock) => sum + (item.total_value || 0), 0),
         count: chemicalStock.length
       }
     ]
 
     // Customer analysis
-    const customerGroups = orders.reduce((acc: any, order: any) => {
+    const customerGroups = orders.reduce((acc: Record<string, CustomerAnalysis>, order: DatabaseOrder) => {
       const customerName = order.customers?.name || 'Unknown'
       if (!acc[customerName]) {
         acc[customerName] = { name: customerName, orders: 0, value: 0 }
@@ -197,22 +284,22 @@ export default function AnalyticsPage() {
       return acc
     }, {})
 
-    const customerAnalysis = Object.values(customerGroups)
-      .sort((a: any, b: any) => b.value - a.value)
+    const customerAnalysis: CustomerAnalysis[] = Object.values(customerGroups)
+      .sort((a: CustomerAnalysis, b: CustomerAnalysis) => b.value - a.value)
       .slice(0, 10)
 
     // Performance metrics
-    const performanceMetrics = {
+    const performanceMetrics: PerformanceMetrics = {
       orderStatusDistribution: [
-        { name: 'Pending', value: orders.filter((o: any) => o.order_status === 'pending').length, color: '#FbbF24' },
-        { name: 'Confirmed', value: orders.filter((o: any) => o.order_status === 'confirmed').length, color: '#3B82F6' },
-        { name: 'In Production', value: orders.filter((o: any) => o.order_status === 'in_production').length, color: '#6366F1' },
-        { name: 'Completed', value: orders.filter((o: any) => o.order_status === 'delivered').length, color: '#10B981' },
-        { name: 'Cancelled', value: orders.filter((o: any) => o.order_status === 'cancelled').length, color: '#EF4444' }
+        { name: 'Pending', value: orders.filter((o: DatabaseOrder) => o.order_status === 'pending').length, color: '#FbbF24' },
+        { name: 'Confirmed', value: orders.filter((o: DatabaseOrder) => o.order_status === 'confirmed').length, color: '#3B82F6' },
+        { name: 'In Production', value: orders.filter((o: DatabaseOrder) => o.order_status === 'in_production').length, color: '#6366F1' },
+        { name: 'Completed', value: orders.filter((o: DatabaseOrder) => o.order_status === 'delivered').length, color: '#10B981' },
+        { name: 'Cancelled', value: orders.filter((o: DatabaseOrder) => o.order_status === 'cancelled').length, color: '#EF4444' }
       ],
       productionTypeDistribution: [
-        { name: 'Weaving', value: production.filter((p: any) => p.production_type === 'weaving').length, color: '#8B5CF6' },
-        { name: 'Coating', value: production.filter((p: any) => p.production_type === 'coating').length, color: '#F59E0B' }
+        { name: 'Weaving', value: production.filter((p: DatabaseProduction) => p.production_type === 'weaving').length, color: '#8B5CF6' },
+        { name: 'Coating', value: production.filter((p: DatabaseProduction) => p.production_type === 'coating').length, color: '#F59E0B' }
       ]
     }
 
@@ -223,28 +310,28 @@ export default function AnalyticsPage() {
     previousPeriodEnd.setDate(previousPeriodEnd.getDate() - timeRange)
 
     const currentPeriodOrders = orders.length
-    const previousOrders = orders.filter((o: any) => {
+    const previousOrders = orders.filter((o: DatabaseOrder) => {
       const orderDate = new Date(o.created_at)
       return orderDate >= previousPeriodStart && orderDate <= previousPeriodEnd
     }).length
 
     const orderGrowth = previousOrders > 0 ? ((currentPeriodOrders - previousOrders) / previousOrders) * 100 : 0
 
-    const completedProduction = production.filter((p: any) => p.production_status === 'completed').length
+    const completedProduction = production.filter((p: DatabaseProduction) => p.production_status === 'completed').length
     const totalProduction = production.length
     const productionEfficiency = totalProduction > 0 ? (completedProduction / totalProduction) * 100 : 0
 
-    const deliveredOrders = orders.filter((o: any) => o.order_status === 'delivered')
-    const onTimeOrders = deliveredOrders.filter((o: any) => 
-      !o.dispatch_date || new Date(o.dispatch_date) <= new Date(o.due_date)
+    const deliveredOrders = orders.filter((o: DatabaseOrder) => o.order_status === 'delivered')
+    const onTimeOrders = deliveredOrders.filter((o: DatabaseOrder) => 
+      !o.dispatch_date || new Date(o.dispatch_date) <= new Date(o.due_date || '')
     )
     const onTimeDelivery = deliveredOrders.length > 0 ? (onTimeOrders.length / deliveredOrders.length) * 100 : 0
 
-    const currentRevenue = orders.reduce((sum: number, o: any) => sum + (o.quantity_ordered * 15), 0)
-    const previousRevenue = orders.filter((o: any) => {
+    const currentRevenue = orders.reduce((sum: number, o: DatabaseOrder) => sum + (o.quantity_ordered * 15), 0)
+    const previousRevenue = orders.filter((o: DatabaseOrder) => {
       const orderDate = new Date(o.created_at)
       return orderDate >= previousPeriodStart && orderDate <= previousPeriodEnd
-    }).reduce((sum: number, o: any) => sum + (o.quantity_ordered * 15), 0)
+    }).reduce((sum: number, o: DatabaseOrder) => sum + (o.quantity_ordered * 15), 0)
 
     const revenueGrowth = previousRevenue > 0 ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 : 0
 

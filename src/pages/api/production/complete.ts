@@ -99,7 +99,18 @@ export default async function handler(
     console.log('Batch created:', batch)
 
     // Create fabric rolls ONLY for coating operations (finished fabric)
-    let createdRolls: any[] = []
+    let createdRolls: {
+      id: string
+      roll_number: string
+      batch_id: string
+      fabric_type: string
+      fabric_id: string
+      roll_length: number
+      remaining_length: number
+      qr_code: string
+      roll_status: string
+      created_at: string
+    }[] = []
     
     if (productionOrder.production_type === 'coating') {
       console.log('Creating fabric rolls for coating production (finished fabric)')

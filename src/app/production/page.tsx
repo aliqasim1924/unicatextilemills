@@ -2,19 +2,16 @@
 
 import { useState, useEffect } from 'react'
 import { 
-  PlayIcon, 
-  PauseIcon, 
-  CheckCircleIcon, 
   ClockIcon,
+  CalendarIcon,
+  PlayIcon,
+  PauseIcon,
+  CheckCircleIcon,
   ExclamationTriangleIcon,
-  EyeIcon,
-  PencilIcon,
   PlusIcon,
   FunnelIcon,
-  TrashIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
-
 import { supabase } from '@/lib/supabase/client'
 import NewProductionOrderForm from '@/components/forms/NewProductionOrderForm'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
@@ -59,33 +56,7 @@ interface ProductionOrder {
   } | null
 }
 
-const statusConfig = {
-  pending: { 
-    color: 'bg-yellow-100 text-yellow-800 border-yellow-200', 
-    icon: ClockIcon,
-    label: 'Pending'
-  },
-  waiting_materials: { 
-    color: 'bg-orange-100 text-orange-800 border-orange-200', 
-    icon: ExclamationTriangleIcon,
-    label: 'Waiting Materials'
-  },
-  in_progress: { 
-    color: 'bg-blue-100 text-blue-800 border-blue-200', 
-    icon: PlayIcon,
-    label: 'In Progress'
-  },
-  on_hold: { 
-    color: 'bg-red-100 text-red-800 border-red-200', 
-    icon: PauseIcon,
-    label: 'On Hold'
-  },
-  completed: { 
-    color: 'bg-green-100 text-green-800 border-green-200', 
-    icon: CheckCircleIcon,
-    label: 'Completed'
-  }
-}
+
 
 const priorityConfig = {
   0: { label: 'Normal', color: 'text-gray-600' },
@@ -169,7 +140,7 @@ export default function ProductionPage() {
     }
   }
 
-  const logProductionOrderStatusChange = async (orderId: string, newStatus: string, updateInfo: any) => {
+  const logProductionOrderStatusChange = async (orderId: string, newStatus: string, updateInfo: Record<string, unknown>) => {
     try {
       // Get production order details for richer audit context
       const { data: order, error: orderError } = await supabase
@@ -759,24 +730,14 @@ export default function ProductionPage() {
       order.finished_fabrics?.name.toLowerCase().includes(searchTerm.toLowerCase())
     
     return matchesStatus && matchesType && matchesSearch
-  })
-
-  const getProgressPercentage = (order: ProductionOrder) => {
-    if (order.quantity_required === 0) return 0
-    return Math.min(100, (order.quantity_produced / order.quantity_required) * 100)
-  }
-
+      })
+  
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Not set'
     return new Date(dateString).toLocaleDateString()
   }
-
-  const isOverdue = (targetDate: string | null, status: string) => {
-    if (!targetDate || status === 'completed') return false
-    return new Date(targetDate) < new Date()
-  }
-
-  if (loading) {
+  
+    if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>

@@ -1,12 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlusIcon, MagnifyingGlassIcon, FunnelIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, MagnifyingGlassIcon, FunnelIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import NewOrderForm from '@/components/forms/NewOrderForm'
 import OrderDetailsModal from '@/components/orders/OrderDetailsModal'
 import EditOrderModal from '@/components/orders/EditOrderModal'
-import OrderActionButtons from '@/components/orders/OrderActionButtons'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
 import ExpandableCustomerOrderRow from '@/components/tables/ExpandableCustomerOrderRow'
 
@@ -106,43 +105,7 @@ export default function OrdersPage() {
     return matchesSearch && matchesStatus
   })
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'confirmed':
-        return 'bg-blue-100 text-blue-800'
-      case 'in_production':
-        return 'bg-indigo-100 text-indigo-800'
-      case 'production_complete':
-        return 'bg-green-100 text-green-800'
-      case 'ready_for_dispatch':
-        return 'bg-purple-100 text-purple-800'
-      case 'dispatched':
-        return 'bg-orange-100 text-orange-800'
-      case 'delivered':
-        return 'bg-emerald-100 text-emerald-800'
-      case 'cancelled':
-        return 'bg-red-100 text-red-800'
-      // Legacy status support
-      case 'fully_allocated':
-        return 'bg-green-100 text-green-800'
-      case 'partially_allocated':
-        return 'bg-indigo-100 text-indigo-800'
-      case 'in_progress':
-        return 'bg-indigo-100 text-indigo-800'
-      case 'completed':
-        return 'bg-green-100 text-green-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
-    }
-  }
 
-  const getPriorityColor = (priority: number) => {
-    if (priority >= 5) return 'text-red-600'
-    if (priority >= 3) return 'text-yellow-600'
-    return 'text-green-600'
-  }
 
   const handleViewOrder = (orderId: string) => {
     setSelectedOrderId(orderId)

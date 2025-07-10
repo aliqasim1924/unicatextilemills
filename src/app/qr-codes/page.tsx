@@ -117,7 +117,7 @@ export default function QRCodesPage() {
           let qrData = null
           try {
             qrData = JSON.parse(roll.qr_code)
-          } catch (e) {
+          } catch (_) {
             console.warn('Failed to parse QR code data for roll:', roll.roll_number)
           }
 
@@ -274,7 +274,7 @@ export default function QRCodesPage() {
               <select
                 id="fabric-type"
                 value={filterType}
-                onChange={(e) => setFilterType(e.target.value as any)}
+                onChange={(e) => setFilterType(e.target.value as 'all' | 'base_fabric' | 'finished_fabric')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Types</option>
@@ -290,7 +290,7 @@ export default function QRCodesPage() {
               <select
                 id="status"
                 value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value as any)}
+                onChange={(e) => setFilterStatus(e.target.value as 'all' | 'available' | 'allocated' | 'used')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Status</option>

@@ -6,12 +6,28 @@ import {
   TruckIcon, 
   EyeIcon, 
   CalendarIcon,
-  UserGroupIcon,
   QrCodeIcon,
   ChevronDownIcon,
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import QRCodeDisplay from '@/components/ui/QRCodeDisplay'
+
+interface ShipmentItem {
+  id: string
+  fabric_roll_id: string
+  quantity_shipped: number
+  fabric_rolls: {
+    roll_number: string
+    roll_length: number
+    qr_code: string
+    fabric_type: string
+    fabric_name?: string
+    production_batches?: {
+      batch_number: string
+      production_type: string
+    }
+  }
+}
 
 interface Shipment {
   id: string
@@ -33,28 +49,12 @@ interface Shipment {
       phone: string
     }
   }
-  shipment_items?: Array<{
-    id: string
-    fabric_roll_id: string
-    quantity_shipped: number
-    fabric_rolls: {
-      roll_number: string
-      roll_length: number
-      qr_code: string
-      fabric_type: string
-      fabric_name?: string
-      production_batches?: {
-        batch_number: string
-        production_type: string
-      }
-    }
-  }>
+  shipment_items?: ShipmentItem[]
 }
 
 export default function ShipmentsPage() {
   const [shipments, setShipments] = useState<Shipment[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null)
   const [expandedShipments, setExpandedShipments] = useState<Set<string>>(new Set())
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -107,7 +107,7 @@ export default function ShipmentsPage() {
         (data || []).map(async (shipment) => {
           if (shipment.shipment_items) {
             const enrichedItems = await Promise.all(
-              shipment.shipment_items.map(async (item) => {
+              shipment.shipment_items.map(async (item: ShipmentItem) => {
                 let fabricName = ''
                 if (item.fabric_rolls) {
                   if (item.fabric_rolls.fabric_type === 'base_fabric') {
@@ -400,7 +400,10 @@ export default function ShipmentsPage() {
                           </button>
                           
                           <button
-                            onClick={() => setSelectedShipment(shipment)}
+                            onClick={() => {
+                              // Details functionality not implemented yet
+                              console.log('Details for shipment:', shipment.id)
+                            }}
                             className="flex-1 px-3 py-2 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center gap-1"
                           >
                             <EyeIcon className="h-3 w-3" />

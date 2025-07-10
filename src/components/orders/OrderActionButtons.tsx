@@ -179,7 +179,12 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
     return actions
   }
 
-  const handleActionClick = (actionConfig: any) => {
+  const handleActionClick = (actionConfig: {
+    action: string
+    label: string
+    newStatus: string
+    requiresData?: boolean
+  }) => {
     setPendingAction(actionConfig)
     
     if (actionConfig.requiresData) {

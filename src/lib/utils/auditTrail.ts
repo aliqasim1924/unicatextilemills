@@ -254,7 +254,7 @@ export const logBusinessEvent = {
 // Legacy function for simple descriptions - kept for backward compatibility
 export const generateOrderAuditDescription = (
   action: string,
-  details?: { [key: string]: any }
+  details?: Record<string, unknown>
 ): string => {
   switch (action) {
     case 'created':

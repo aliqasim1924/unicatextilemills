@@ -1,11 +1,41 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlusIcon, MagnifyingGlassIcon, PencilIcon, TrashIcon, EyeIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, MagnifyingGlassIcon, FunnelIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import NewBaseFabricForm from '@/components/forms/NewBaseFabricForm'
 import NewFinishedFabricForm from '@/components/forms/NewFinishedFabricForm'
-import { BaseFabric, FinishedFabric } from '@/types/database'
+
+interface BaseFabric {
+  id: string
+  name: string
+  type: string
+  gsm: number
+  width_meters: number
+  color: string
+  supplier: string
+  stock_quantity: number
+  minimum_stock: number
+  unit_price: number
+  fabric_composition: string
+  created_at: string
+  updated_at: string
+}
+
+interface FinishedFabric {
+  id: string
+  name: string
+  gsm: number
+  width_meters: number
+  color: string
+  coating_type: string
+  stock_quantity: number
+  minimum_stock: number
+  unit_price: number
+  fabric_composition: string
+  created_at: string
+  updated_at: string
+}
 
 export default function FabricsPage() {
   const [activeTab, setActiveTab] = useState<'base' | 'finished'>('base')
@@ -356,7 +386,7 @@ export default function FabricsPage() {
                             <div>{fabric.gsm} GSM • {fabric.width_meters}m Width</div>
                             <div className="text-gray-700">{fabric.coating_type || 'Standard'} Coating</div>
                             <div className="text-xs text-gray-600 mt-1">
-                              Base: {(fabric as any).base_fabrics?.name || 'None'}
+                              Base: {'Not specified'}
                             </div>
                           </div>
                         </td>

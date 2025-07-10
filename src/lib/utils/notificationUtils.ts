@@ -27,7 +27,7 @@ export interface NotificationEvent {
   title: string
   message: string
   priority?: 'low' | 'normal' | 'high' | 'urgent'
-  data?: any
+  data?: Record<string, unknown>
   recipients?: string[]
 }
 

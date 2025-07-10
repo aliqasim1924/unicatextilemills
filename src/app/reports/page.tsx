@@ -1,25 +1,98 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { 
   DocumentChartBarIcon, 
   ChartBarIcon, 
   CubeIcon, 
   ClipboardDocumentListIcon,
   CalendarDaysIcon,
-  FunnelIcon,
-  ArrowDownTrayIcon,
-  MagnifyingGlassIcon,
-  PrinterIcon
+  ArrowDownTrayIcon
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import { generateReportPDF } from '@/components/pdf/generators/PDFGenerator'
 
+interface OrderData {
+  id: string
+  internal_order_number: string
+  order_status: string
+  due_date: string
+  created_at: string
+  quantity_ordered: number
+  priority_override?: string
+  dispatch_date?: string
+  customers: {
+    name: string
+    contact_person?: string
+  }
+  finished_fabrics: {
+    name: string
+    gsm: number
+    width_meters: number
+    color: string
+    coating_type: string
+  }
+}
+
+interface ProductionData {
+  id: string
+  internal_order_number: string
+  production_status: string
+  production_type: string
+  quantity_required: number
+  quantity_produced: number
+  target_completion_date: string
+  created_at: string
+  customer_orders: {
+    internal_order_number: string
+    customers: {
+      name: string
+    }
+  }
+  base_fabrics?: {
+    name: string
+    gsm: number
+    width_meters: number
+  }
+  finished_fabrics?: {
+    name: string
+    gsm: number
+    width_meters: number
+    color: string
+    coating_type: string
+  }
+}
+
+interface StockData {
+  id: string
+  name?: string
+  stock_quantity: number
+  minimum_stock: number
+  type: string
+  yarn_type?: string
+  chemical_name?: string
+  stock_quantity_kg?: number
+  minimum_stock_kg?: number
+  stock_quantity_liters?: number
+  minimum_stock_liters?: number
+  total_value?: number
+  unit_cost_per_kg?: number
+  unit_cost_per_liter?: number
+}
+
+interface CustomerData {
+  id: string
+  name: string
+  contact_person?: string
+  email?: string
+  phone?: string
+}
+
 interface ReportData {
-  orders: any[]
-  production: any[]
-  stock: any[]
-  customers: any[]
+  orders: OrderData[]
+  production: ProductionData[]
+  stock: StockData[]
+  customers: CustomerData[]
   summary: {
     totalOrders: number
     totalProduction: number
@@ -40,17 +113,13 @@ export default function ReportsPage() {
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   })
-  const [filters, setFilters] = useState({
+  const [filters] = useState({
     customer: '',
     status: 'all',
     priority: 'all'
   })
 
-  useEffect(() => {
-    loadReportData()
-  }, [dateRange, filters])
-
-  const loadReportData = async () => {
+  const loadReportData = useCallback(async () => {
     try {
       setLoading(true)
       
@@ -90,12 +159,12 @@ export default function ReportsPage() {
         .select('*')
         .order('name')
 
-      const { data: yarnStock, error: yarnStockError } = await supabase
+      const { data: yarnStock } = await supabase
         .from('yarn_stock')
         .select('*')
         .order('yarn_type')
 
-      const { data: chemicalStock, error: chemicalStockError } = await supabase
+      const { data: chemicalStock } = await supabase
         .from('chemical_stock')
         .select('*')
         .order('chemical_name')
@@ -165,7 +234,11 @@ export default function ReportsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [dateRange, filters])
+
+  useEffect(() => {
+    loadReportData()
+  }, [loadReportData])
 
   const reportCategories = [
     {

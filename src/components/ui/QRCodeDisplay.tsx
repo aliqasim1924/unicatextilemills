@@ -10,6 +10,15 @@ interface QRCodeDisplayProps {
   showData?: boolean
 }
 
+interface ParsedQRData {
+  type: string
+  data?: string
+  rollNumber?: string
+  rollLength?: number
+  fabricType?: string
+  qrGeneratedAt: string
+}
+
 export default function QRCodeDisplay({ 
   qrData, 
   size = 150, 
@@ -19,7 +28,7 @@ export default function QRCodeDisplay({
   const [qrImageUrl, setQrImageUrl] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
-  const [parsedData, setParsedData] = useState<any>(null)
+  const [parsedData, setParsedData] = useState<ParsedQRData | null>(null)
 
   useEffect(() => {
     generateQRCode()

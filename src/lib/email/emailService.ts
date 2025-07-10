@@ -53,7 +53,7 @@ class EmailService {
 
   private async initializeTransporter(): Promise<void> {
     try {
-      this.transporter = nodemailer.createTransporter({
+      this.transporter = nodemailer.createTransport({
         host: this.config.host,
         port: this.config.port,
         secure: this.config.secure,
@@ -64,7 +64,7 @@ class EmailService {
       })
 
       // Verify connection configuration
-      if (this.config.auth) {
+      if (this.config.auth && this.transporter) {
         await this.transporter.verify()
         console.log('Email service initialized successfully')
       } else {
@@ -107,7 +107,7 @@ class EmailService {
   }
 
   // Create HTML email template for notifications
-  createNotificationEmailHTML(title: string, message: string, priority: string, additionalData?: any): string {
+  createNotificationEmailHTML(title: string, message: string, priority: string, additionalData?: Record<string, unknown>): string {
     const priorityColors = {
       low: '#10B981',
       normal: '#3B82F6',

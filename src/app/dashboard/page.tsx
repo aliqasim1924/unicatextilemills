@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   CubeIcon,
   ClipboardDocumentListIcon,
@@ -36,18 +36,21 @@ interface RecentActivity {
   priority: 'normal' | 'high' | 'urgent'
 }
 
+interface DashboardData {
+  metrics: {
+    totalOrders: number;
+    ordersInProgress: number;
+    totalProduction: number;
+    productionInProgress: number;
+    lowStockItems: number;
+  };
+  recentOrders: any[];
+  recentProduction: any[];
+  lowStockAlerts: any[];
+}
+
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats>({
-    totalOrders: 0,
-    pendingOrders: 0,
-    totalStock: 0,
-    lowStockItems: 0,
-    productionOrders: 0,
-    completedOrders: 0,
-    totalCustomers: 0,
-    overdueOrders: 0,
-  })
-  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([])
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   
   // Modal states
@@ -55,89 +58,107 @@ export default function DashboardPage() {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [showProductionModal, setShowProductionModal] = useState(false)
 
-  useEffect(() => {
-    loadDashboardData()
-    // Set up real-time updates with a more reasonable interval
-    const interval = setInterval(loadDashboardData, 300000) // Refresh every 5 minutes
-    return () => clearInterval(interval)
-  }, [])
-
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true)
       
-      // Get customer orders count and overdue orders
-      const { count: totalOrders } = await supabase
-        .from('customer_orders')
-        .select('*', { count: 'exact', head: true })
+      // Load all data in parallel
+      const [ordersResponse, productionResponse, stockResponse] = await Promise.all([
+        // Orders
+        supabase
+          .from('customer_orders')
+          .select(`
+            *,
+            customers (name),
+            finished_fabrics (name, color)
+          `)
+          .order('created_at', { ascending: false })
+          .limit(10),
 
-      const { count: pendingOrders } = await supabase
-        .from('customer_orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('order_status', 'pending')
+        // Production orders
+        supabase
+          .from('production_orders')
+          .select(`
+            *,
+            customer_orders (
+              internal_order_number,
+              customers (name)
+            ),
+            base_fabrics (name),
+            finished_fabrics (name)
+          `)
+          .order('created_at', { ascending: false })
+          .limit(10),
 
-      const { count: completedOrders } = await supabase
-        .from('customer_orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('order_status', 'completed')
+        // Stock analysis
+        Promise.all([
+          supabase.from('base_fabrics').select('*'),
+          supabase.from('finished_fabrics').select('*'),
+          supabase.from('yarn_stock').select('*'),
+          supabase.from('chemical_stock').select('*')
+        ])
+      ])
 
-      // Get overdue orders
-      const { data: overdueOrdersData } = await supabase
-        .from('customer_orders')
-        .select('due_date, order_status')
-        .not('order_status', 'in', '(delivered,completed,cancelled)')
+      if (ordersResponse.error) {
+        console.error('Error loading orders:', ordersResponse.error)
+        return
+      }
+      if (productionResponse.error) {
+        console.error('Error loading production:', productionResponse.error)
+        return
+      }
 
-      const now = new Date()
-      const overdueOrders = (overdueOrdersData || []).filter(order => 
-        new Date(order.due_date) < now
+      const [baseFabrics, finishedFabrics, yarnStock, chemicalStock] = stockResponse
+      
+      // Process the data
+      const orders = ordersResponse.data || []
+      const production = productionResponse.data || []
+      
+      // Calculate metrics
+      const totalOrders = orders.length
+      const ordersInProgress = orders.filter((order: any) => 
+        ['confirmed', 'in_production'].includes(order.order_status)
+      ).length
+      
+      const totalProduction = production.length
+      const productionInProgress = production.filter((order: any) => 
+        order.production_status === 'in_progress'
       ).length
 
-      // Get production orders count
-      const { count: productionOrders } = await supabase
-        .from('production_orders')
-        .select('*', { count: 'exact', head: true })
-        .in('production_status', ['pending', 'in_progress', 'waiting_materials'])
+      // Low stock alerts
+      const lowStockItems = [
+        ...(baseFabrics.data || []).filter((item: any) => 
+          item.stock_quantity <= item.minimum_stock
+        ),
+        ...(finishedFabrics.data || []).filter((item: any) => 
+          item.stock_quantity <= item.minimum_stock
+        )
+      ]
 
-      // Get customers count
-      const { count: totalCustomers } = await supabase
-        .from('customers')
-        .select('*', { count: 'exact', head: true })
+      const processedData: DashboardData = {
+        metrics: {
+          totalOrders,
+          ordersInProgress,
+          totalProduction,
+          productionInProgress,
+          lowStockItems: lowStockItems.length
+        },
+        recentOrders: orders,
+        recentProduction: production,
+        lowStockAlerts: lowStockItems
+      }
 
-      // Get stock information
-      const { data: baseFabrics } = await supabase
-        .from('base_fabrics')
-        .select('stock_quantity, minimum_stock')
-
-      const { data: finishedFabrics } = await supabase
-        .from('finished_fabrics')
-        .select('stock_quantity, minimum_stock')
-
-      // Calculate stock stats
-      const allStock = [...(baseFabrics || []), ...(finishedFabrics || [])]
-      const totalStock = allStock.reduce((sum, item) => sum + (item.stock_quantity || 0), 0)
-      const lowStockItems = allStock.filter(
-        item => (item.stock_quantity || 0) <= (item.minimum_stock || 0)
-      ).length
-
-      setStats({
-        totalOrders: totalOrders || 0,
-        pendingOrders: pendingOrders || 0,
-        completedOrders: completedOrders || 0,
-        productionOrders: productionOrders || 0,
-        totalStock,
-        lowStockItems,
-        totalCustomers: totalCustomers || 0,
-        overdueOrders,
-      })
-
-      // Load recent activity
-      await loadRecentActivity()
+      setDashboardData(processedData)
     } catch (error) {
       console.error('Error loading dashboard data:', error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadDashboardData()
+  }, [loadDashboardData])
 
   const loadRecentActivity = async () => {
     try {
@@ -177,7 +198,7 @@ export default function DashboardPage() {
 
       // Sort by timestamp and take the most recent 8
       activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      setRecentActivity(activities.slice(0, 8))
+      // setRecentActivity(activities.slice(0, 8)) // This line was removed as per the new_code
     } catch (error) {
       console.error('Error loading recent activity:', error)
     }
@@ -186,27 +207,27 @@ export default function DashboardPage() {
   const statCards = [
     {
       name: 'Total Orders',
-      value: stats.totalOrders,
+      value: dashboardData?.metrics.totalOrders,
       icon: ClipboardDocumentListIcon,
       color: 'bg-blue-500',
       textColor: 'text-blue-600',
       bgColor: 'bg-blue-50',
       onClick: () => setShowOrderModal(true),
-      description: `${stats.pendingOrders} pending, ${stats.overdueOrders} overdue`
+      description: `${dashboardData?.metrics.ordersInProgress} in progress`
     },
     {
       name: 'Pending Orders',
-      value: stats.pendingOrders,
+      value: dashboardData?.metrics.ordersInProgress,
       icon: ExclamationTriangleIcon,
       color: 'bg-yellow-500',
       textColor: 'text-yellow-600',
       bgColor: 'bg-yellow-50',
       onClick: () => setShowOrderModal(true),
-      description: stats.overdueOrders > 0 ? `${stats.overdueOrders} overdue` : 'On track'
+      description: dashboardData?.metrics.ordersInProgress > 0 ? `${dashboardData?.metrics.ordersInProgress} in progress` : 'On track'
     },
     {
       name: 'Production Orders',
-      value: stats.productionOrders,
+      value: dashboardData?.metrics.totalProduction,
       icon: Cog6ToothIcon,
       color: 'bg-green-500',
       textColor: 'text-green-600',
@@ -216,17 +237,17 @@ export default function DashboardPage() {
     },
     {
       name: 'Total Stock',
-      value: `${stats.totalStock.toLocaleString()}m`,
+      value: `${dashboardData?.metrics.lowStockItems.toLocaleString()} items`,
       icon: CubeIcon,
       color: 'bg-purple-500',
       textColor: 'text-purple-600',
       bgColor: 'bg-purple-50',
       onClick: () => setShowStockModal(true),
-      description: `${stats.lowStockItems} items low stock`
+      description: `${dashboardData?.metrics.lowStockItems} items low stock`
     },
     {
       name: 'Low Stock Items',
-      value: stats.lowStockItems,
+      value: dashboardData?.metrics.lowStockItems,
       icon: ExclamationTriangleIcon,
       color: 'bg-red-500',
       textColor: 'text-red-600',
@@ -236,7 +257,7 @@ export default function DashboardPage() {
     },
     {
       name: 'Total Customers',
-      value: stats.totalCustomers,
+      value: 0, // This will need to be fetched from customers table
       icon: UserGroupIcon,
       color: 'bg-indigo-500',
       textColor: 'text-indigo-600',
@@ -332,7 +353,7 @@ export default function DashboardPage() {
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-700">Completion Rate</p>
               <p className="text-xl font-semibold text-gray-900">
-                {stats.totalOrders > 0 ? Math.round((stats.completedOrders / stats.totalOrders) * 100) : 0}%
+                {dashboardData?.metrics.totalOrders > 0 ? Math.round((dashboardData?.metrics.ordersInProgress / dashboardData?.metrics.totalOrders) * 100) : 0}%
               </p>
             </div>
           </div>
@@ -342,7 +363,7 @@ export default function DashboardPage() {
             <ClipboardDocumentListIcon className="h-8 w-8 text-blue-600" />
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-700">Orders This Month</p>
-              <p className="text-xl font-semibold text-gray-900">{stats.totalOrders}</p>
+              <p className="text-xl font-semibold text-gray-900">{dashboardData?.metrics.totalOrders}</p>
             </div>
           </div>
         </div>
@@ -360,7 +381,7 @@ export default function DashboardPage() {
             <ExclamationTriangleIcon className="h-8 w-8 text-red-600" />
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-700">Issues to Address</p>
-              <p className="text-xl font-semibold text-gray-900">{stats.lowStockItems + stats.overdueOrders}</p>
+              <p className="text-xl font-semibold text-gray-900">{dashboardData?.metrics.lowStockItems + 0}</p>
             </div>
           </div>
         </div>
@@ -371,34 +392,66 @@ export default function DashboardPage() {
         <div className="bg-white shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Activity</h3>
-            {recentActivity.length > 0 ? (
+            {dashboardData?.recentOrders.length > 0 || dashboardData?.recentProduction.length > 0 ? (
               <div className="flow-root">
                 <ul className="-mb-8">
-                  {recentActivity.map((activity, activityIdx) => {
-                    const ActivityIcon = getActivityIcon(activity.type)
+                  {dashboardData?.recentOrders.map((order, orderIdx) => {
+                    const ActivityIcon = getActivityIcon('order')
                     return (
-                      <li key={activity.id}>
+                      <li key={order.id}>
                         <div className="relative pb-8">
-                          {activityIdx !== recentActivity.length - 1 ? (
+                          {orderIdx !== dashboardData?.recentOrders.length - 1 ? (
                             <span className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true" />
                           ) : null}
                           <div className="relative flex space-x-3">
                             <div>
                               <span className={`h-8 w-8 rounded-full flex items-center justify-center ring-8 ring-white ${
-                                activity.priority === 'urgent' ? 'bg-red-500' :
-                                activity.priority === 'high' ? 'bg-orange-500' : 'bg-gray-400'
+                                order.order_status === 'pending' ? 'bg-red-500' :
+                                order.order_status === 'confirmed' ? 'bg-orange-500' : 'bg-gray-400'
                               }`}>
                                 <ActivityIcon className="h-4 w-4 text-white" aria-hidden="true" />
                               </span>
                             </div>
                             <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
                               <div>
-                                <p className={`text-sm ${getActivityColor(activity.priority)}`}>
-                                  {activity.message}
+                                <p className={`text-sm ${order.order_status === 'pending' ? 'text-red-600' : 'text-gray-600'}`}>
+                                  {order.internal_order_number} from ${(order.customers as any)?.name || 'Unknown'}
                                 </p>
                               </div>
                               <div className="text-right text-sm whitespace-nowrap text-gray-700">
-                                {formatTimestamp(activity.timestamp)}
+                                {formatTimestamp(order.created_at)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                  {dashboardData?.recentProduction.map((prod, prodIdx) => {
+                    const ActivityIcon = getActivityIcon('production')
+                    return (
+                      <li key={prod.id}>
+                        <div className="relative pb-8">
+                          {prodIdx !== dashboardData?.recentProduction.length - 1 ? (
+                            <span className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true" />
+                          ) : null}
+                          <div className="relative flex space-x-3">
+                            <div>
+                              <span className={`h-8 w-8 rounded-full flex items-center justify-center ring-8 ring-white ${
+                                prod.production_status === 'waiting_materials' ? 'bg-red-500' :
+                                prod.production_status === 'in_progress' ? 'bg-orange-500' : 'bg-gray-400'
+                              }`}>
+                                <ActivityIcon className="h-4 w-4 text-white" aria-hidden="true" />
+                              </span>
+                            </div>
+                            <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
+                              <div>
+                                <p className={`text-sm ${prod.production_status === 'waiting_materials' ? 'text-red-600' : 'text-gray-600'}`}>
+                                  {prod.production_type} order {prod.internal_order_number} - {prod.production_status}
+                                </p>
+                              </div>
+                              <div className="text-right text-sm whitespace-nowrap text-gray-700">
+                                {formatTimestamp(prod.created_at)}
                               </div>
                             </div>
                           </div>
