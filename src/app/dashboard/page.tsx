@@ -211,7 +211,7 @@ export default function DashboardPage() {
       textColor: 'text-yellow-600',
       bgColor: 'bg-yellow-50',
       onClick: () => setShowOrderModal(true),
-      description: dashboardData?.metrics.ordersInProgress > 0 ? `${dashboardData?.metrics.ordersInProgress} in progress` : 'On track'
+      description: (dashboardData?.metrics.ordersInProgress || 0) > 0 ? `${dashboardData?.metrics.ordersInProgress || 0} in progress` : 'On track'
     },
     {
       name: 'Production Orders',
@@ -225,17 +225,17 @@ export default function DashboardPage() {
     },
     {
       name: 'Total Stock',
-      value: `${dashboardData?.metrics.lowStockItems.toLocaleString()} items`,
+      value: `${(dashboardData?.metrics.lowStockItems || 0).toLocaleString()} items`,
       icon: CubeIcon,
       color: 'bg-purple-500',
       textColor: 'text-purple-600',
       bgColor: 'bg-purple-50',
       onClick: () => setShowStockModal(true),
-      description: `${dashboardData?.metrics.lowStockItems} items low stock`
+      description: `${dashboardData?.metrics.lowStockItems || 0} items low stock`
     },
     {
       name: 'Low Stock Items',
-      value: dashboardData?.metrics.lowStockItems,
+      value: dashboardData?.metrics.lowStockItems || 0,
       icon: ExclamationTriangleIcon,
       color: 'bg-red-500',
       textColor: 'text-red-600',
