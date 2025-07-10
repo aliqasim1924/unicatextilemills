@@ -1,5 +1,6 @@
 [build]
-  command = "npx @netlify/plugin-nextjs"
+  command = "npm run build"
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "18.20.2"
