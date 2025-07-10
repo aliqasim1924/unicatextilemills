@@ -4,10 +4,22 @@ import { useState, useRef, useEffect } from 'react'
 import { XMarkIcon, QrCodeIcon, CameraIcon } from '@heroicons/react/24/outline'
 import { qrCodeUtils, type QRCodeData } from '@/lib/utils/qrCodeUtils'
 
+interface ScanResult {
+  success: boolean
+  data?: {
+    qrData: QRCodeData
+    scanId: string
+    timestamp: string
+    location: string
+    operator: string
+  }
+  error?: string
+}
+
 interface QRCodeScannerProps {
   isOpen: boolean
   onClose: () => void
-  onScanSuccess: (data: QRCodeData, scanResult: any) => void
+  onScanSuccess: (data: QRCodeData, scanResult: ScanResult['data']) => void
   scanType: 'issue' | 'receive' | 'move' | 'audit' | 'quality_check'
   location: string
   operatorName: string
@@ -25,7 +37,7 @@ export default function QRCodeScanner({
   const [manualInput, setManualInput] = useState('')
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState('')
-  const [lastScanResult, setLastScanResult] = useState<any>(null)
+  const [lastScanResult, setLastScanResult] = useState<ScanResult['data'] | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -90,9 +102,6 @@ export default function QRCodeScanner({
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-      // Get image data
-      const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-      
       // TODO: Implement QR code detection
       // This would use a library like jsQR or qr-scanner
       // For now, we'll simulate a scan

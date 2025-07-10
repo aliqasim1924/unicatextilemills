@@ -117,7 +117,7 @@ export default function QRCodesPage() {
           let qrData = null
           try {
             qrData = JSON.parse(roll.qr_code)
-          } catch (_) {
+          } catch {
             console.warn('Failed to parse QR code data for roll:', roll.roll_number)
           }
 

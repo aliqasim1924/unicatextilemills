@@ -113,12 +113,6 @@ export default function ReportsPage() {
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   })
-  const [filters] = useState({
-    customer: '',
-    status: 'all',
-    priority: 'all'
-  })
-
   const loadReportData = useCallback(async () => {
     try {
       setLoading(true)
@@ -234,7 +228,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateRange, filters])
+  }, [dateRange])
 
   useEffect(() => {
     loadReportData()

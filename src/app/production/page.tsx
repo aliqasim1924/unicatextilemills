@@ -3,9 +3,7 @@
 import { useState, useEffect } from 'react'
 import { 
   ClockIcon,
-  CalendarIcon,
   PlayIcon,
-  PauseIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   PlusIcon,
@@ -140,7 +138,7 @@ export default function ProductionPage() {
     }
   }
 
-  const logProductionOrderStatusChange = async (orderId: string, newStatus: string, updateInfo: Record<string, unknown>) => {
+  const logProductionOrderStatusChange = async (orderId: string, newStatus: string) => {
     try {
       // Get production order details for richer audit context
       const { data: order, error: orderError } = await supabase
@@ -336,7 +334,11 @@ export default function ProductionPage() {
         }
       } else {
         // For all other status changes, update directly in database
-        const updateData: any = {
+        const updateData: {
+          production_status: string
+          updated_at: string
+          actual_start_date?: string
+        } = {
           production_status: newStatus,
           updated_at: new Date().toISOString()
         }
@@ -357,7 +359,7 @@ export default function ProductionPage() {
         }
 
         // Log audit trail for non-completion status changes
-        await logProductionOrderStatusChange(orderId, newStatus, pendingStatusUpdate)
+        await logProductionOrderStatusChange(orderId, newStatus)
       }
 
       // Reload data and close modal

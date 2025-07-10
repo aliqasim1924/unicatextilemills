@@ -17,16 +17,7 @@ import StockDetailsModal from '@/components/dashboard/StockDetailsModal'
 import OrderDetailsModal from '@/components/dashboard/OrderDetailsModal'
 import ProductionDetailsModal from '@/components/dashboard/ProductionDetailsModal'
 
-interface DashboardStats {
-  totalOrders: number
-  pendingOrders: number
-  totalStock: number
-  lowStockItems: number
-  productionOrders: number
-  completedOrders: number
-  totalCustomers: number
-  overdueOrders: number
-}
+
 
 interface RecentActivity {
   id: string
@@ -34,6 +25,47 @@ interface RecentActivity {
   message: string
   timestamp: string
   priority: 'normal' | 'high' | 'urgent'
+}
+
+interface OrderData {
+  id: string
+  internal_order_number: string
+  order_status: string
+  created_at: string
+  customers?: {
+    name: string
+  } | null
+  finished_fabrics?: {
+    name: string
+    color: string
+  } | null
+}
+
+interface ProductionData {
+  id: string
+  internal_order_number: string
+  production_status: string
+  production_type: string
+  created_at: string
+  customer_orders?: {
+    internal_order_number: string
+    customers?: {
+      name: string
+    } | null
+  } | null
+  base_fabrics?: {
+    name: string
+  } | null
+  finished_fabrics?: {
+    name: string
+  } | null
+}
+
+interface StockAlert {
+  id: string
+  name: string
+  stock_quantity: number
+  minimum_stock: number
 }
 
 interface DashboardData {
@@ -44,9 +76,9 @@ interface DashboardData {
     productionInProgress: number;
     lowStockItems: number;
   };
-  recentOrders: any[];
-  recentProduction: any[];
-  lowStockAlerts: any[];
+  recentOrders: OrderData[];
+  recentProduction: ProductionData[];
+  lowStockAlerts: StockAlert[];
 }
 
 export default function DashboardPage() {
@@ -93,9 +125,7 @@ export default function DashboardPage() {
         // Stock analysis
         Promise.all([
           supabase.from('base_fabrics').select('*'),
-          supabase.from('finished_fabrics').select('*'),
-          supabase.from('yarn_stock').select('*'),
-          supabase.from('chemical_stock').select('*')
+          supabase.from('finished_fabrics').select('*')
         ])
       ])
 
@@ -108,7 +138,7 @@ export default function DashboardPage() {
         return
       }
 
-      const [baseFabrics, finishedFabrics, yarnStock, chemicalStock] = stockResponse
+      const [baseFabrics, finishedFabrics] = stockResponse
       
       // Process the data
       const orders = ordersResponse.data || []
@@ -116,21 +146,21 @@ export default function DashboardPage() {
       
       // Calculate metrics
       const totalOrders = orders.length
-      const ordersInProgress = orders.filter((order: any) => 
+      const ordersInProgress = orders.filter((order: OrderData) => 
         ['confirmed', 'in_production'].includes(order.order_status)
       ).length
       
       const totalProduction = production.length
-      const productionInProgress = production.filter((order: any) => 
+      const productionInProgress = production.filter((order: ProductionData) => 
         order.production_status === 'in_progress'
       ).length
 
       // Low stock alerts
       const lowStockItems = [
-        ...(baseFabrics.data || []).filter((item: any) => 
+        ...(baseFabrics.data || []).filter((item: StockAlert) => 
           item.stock_quantity <= item.minimum_stock
         ),
-        ...(finishedFabrics.data || []).filter((item: any) => 
+        ...(finishedFabrics.data || []).filter((item: StockAlert) => 
           item.stock_quantity <= item.minimum_stock
         )
       ]
@@ -160,49 +190,7 @@ export default function DashboardPage() {
     loadDashboardData()
   }, [loadDashboardData])
 
-  const loadRecentActivity = async () => {
-    try {
-      // Get recent orders
-      const { data: recentOrders } = await supabase
-        .from('customer_orders')
-        .select(`
-          id, internal_order_number, created_at, order_status,
-          customers!inner (name)
-        `)
-        .order('created_at', { ascending: false })
-        .limit(5)
 
-      // Get recent production orders
-      const { data: recentProduction } = await supabase
-        .from('production_orders')
-        .select('id, internal_order_number, created_at, production_status, production_type')
-        .order('created_at', { ascending: false })
-        .limit(5)
-
-      const activities: RecentActivity[] = [
-        ...(recentOrders || []).map(order => ({
-          id: `order-${order.id}`,
-          type: 'order' as const,
-          message: `New order ${order.internal_order_number} from ${(order.customers as any)?.name || 'Unknown'}`,
-          timestamp: order.created_at,
-          priority: order.order_status === 'pending' ? 'high' as const : 'normal' as const
-        })),
-        ...(recentProduction || []).map(prod => ({
-          id: `production-${prod.id}`,
-          type: 'production' as const,
-          message: `${prod.production_type} order ${prod.internal_order_number} - ${prod.production_status}`,
-          timestamp: prod.created_at,
-          priority: prod.production_status === 'waiting_materials' ? 'urgent' as const : 'normal' as const
-        }))
-      ]
-
-      // Sort by timestamp and take the most recent 8
-      activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      // setRecentActivity(activities.slice(0, 8)) // This line was removed as per the new_code
-    } catch (error) {
-      console.error('Error loading recent activity:', error)
-    }
-  }
 
   const statCards = [
     {
@@ -276,13 +264,7 @@ export default function DashboardPage() {
     }
   }
 
-  const getActivityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent': return 'text-red-600'
-      case 'high': return 'text-orange-600'
-      default: return 'text-gray-600'
-    }
-  }
+
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)

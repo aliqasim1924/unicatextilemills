@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlusIcon, MagnifyingGlassIcon, FunnelIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, MagnifyingGlassIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import NewBaseFabricForm from '@/components/forms/NewBaseFabricForm'
 import NewFinishedFabricForm from '@/components/forms/NewFinishedFabricForm'
