@@ -83,7 +83,10 @@ temp/
 
 # Gatsby files
 .cache/
-public
+public/
+!public/_redirects
+!public/images/
+!public/templates/
 
 # Storybook build outputs
 .out
