@@ -115,6 +115,9 @@ export const batchUtils = {
     fabricId: string
     rollLength: number
   }) => {
+    // Generate unique ID for this QR code (for download URL)
+    const qrId = `qr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    
     return {
       type: 'fabric_roll',
       rollNumber: rollData.rollNumber,
@@ -122,7 +125,14 @@ export const batchUtils = {
       fabricType: rollData.fabricType,
       fabricId: rollData.fabricId,
       rollLength: rollData.rollLength,
-      qrGeneratedAt: new Date().toISOString()
+      qrGeneratedAt: new Date().toISOString(),
+      
+      // Download URL for PDF/text file generation
+      detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,
+      
+      additionalData: {
+        qrId: qrId
+      }
     }
   },
 
