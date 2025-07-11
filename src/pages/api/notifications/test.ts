@@ -37,7 +37,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           })
           
           // Process the notification immediately
-          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/notifications/process`, {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications/process`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -69,7 +69,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           })
 
           // Process the notification
-          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/notifications/process`, {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications/process`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -101,7 +101,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           })
 
           // Process the notification
-          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/notifications/process`, {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications/process`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -132,7 +132,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           })
 
           // Process the notification
-          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/notifications/process`, {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications/process`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

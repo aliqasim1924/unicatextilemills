@@ -76,7 +76,7 @@ export const qrCodeUtils = {
       productionOrderNumber: rollData.productionOrderNumber,
       
       // Download URL for PDF/text file generation
-      detailsUrl: `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,
+      detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,
       
       additionalData: {
         ...rollData.additionalData,
