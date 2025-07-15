@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { supabase } from '@/lib/supabase/client'
 import { qrCodeUtils } from '@/lib/utils/qrCodeUtils'
+import { numberingUtils } from '@/lib/utils/numberingUtils'
 
 interface CompleteProductionRequest {
   productionOrderId: string
@@ -66,11 +67,9 @@ export default async function handler(
 
     console.log('Using actualQuantity:', actualQuantity)
 
-    // Generate batch number (simple format since RPC doesn't exist)
+    // Generate batch number using centralized utility
+    const batchNumber = await numberingUtils.generateBatchNumber(productionOrder.production_type)
     const now = new Date()
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
-    const timeStr = now.getTime().toString().slice(-4)
-    const batchNumber = `${productionOrder.production_type.toUpperCase()}-${dateStr}-${timeStr}`
 
     console.log('Generated batch number:', batchNumber)
 
@@ -224,19 +223,23 @@ export default async function handler(
         })
 
       console.log('Base fabric stock updated:', newStock)
-    } else if (productionOrder.finished_fabrics) {
-      // Update finished fabric stock
-      const newStock = (productionOrder.finished_fabrics.stock_quantity || 0) + actualQuantity
+    } else if (productionOrder.production_type === 'coating' && productionOrder.finished_fabrics) {
+      // For coating production, we need to:
+      // 1. Add finished fabric stock (output)
+      // 2. Deduct base fabric stock (input consumed)
+      
+      // Add finished fabric stock
+      const newFinishedStock = (productionOrder.finished_fabrics.stock_quantity || 0) + actualQuantity
       
       await supabase
         .from('finished_fabrics')
         .update({
-          stock_quantity: newStock,
+          stock_quantity: newFinishedStock,
           updated_at: now.toISOString()
         })
         .eq('id', productionOrder.finished_fabric_id)
 
-      // Record stock movement
+      // Record finished fabric stock movement (production output)
       await supabase
         .from('stock_movements')
         .insert({
@@ -246,11 +249,54 @@ export default async function handler(
           quantity: actualQuantity,
           reference_id: productionOrderId,
           reference_type: 'production_order',
-          notes: `Production completed - Batch ${batchNumber}`,
+          notes: `Coating production completed - Batch ${batchNumber}`,
           created_at: now.toISOString()
         })
 
-      console.log('Finished fabric stock updated:', newStock)
+      console.log('Finished fabric stock updated:', newFinishedStock)
+
+      // Deduct base fabric stock (input consumed)
+      // Get the base fabric ID from the finished fabric
+      const { data: finishedFabric, error: finishedFabricError } = await supabase
+        .from('finished_fabrics')
+        .select('base_fabric_id, base_fabrics(stock_quantity)')
+        .eq('id', productionOrder.finished_fabric_id)
+        .single()
+
+      if (!finishedFabricError && finishedFabric?.base_fabric_id && finishedFabric.base_fabrics) {
+        const baseFabricData = Array.isArray(finishedFabric.base_fabrics) 
+          ? finishedFabric.base_fabrics[0]
+          : finishedFabric.base_fabrics
+        
+        const baseFabricStock = baseFabricData?.stock_quantity || 0
+        const newBaseStock = Math.max(0, baseFabricStock - actualQuantity)
+        
+        await supabase
+          .from('base_fabrics')
+          .update({
+            stock_quantity: newBaseStock,
+            updated_at: now.toISOString()
+          })
+          .eq('id', finishedFabric.base_fabric_id)
+
+        // Record base fabric stock movement (production consumption)
+        await supabase
+          .from('stock_movements')
+          .insert({
+            fabric_type: 'base_fabric',
+            fabric_id: finishedFabric.base_fabric_id,
+            movement_type: 'production_out',
+            quantity: -actualQuantity, // Negative because it's consumption
+            reference_id: productionOrderId,
+            reference_type: 'production_order',
+            notes: `Base fabric consumed for coating - Batch ${batchNumber}`,
+            created_at: now.toISOString()
+          })
+
+        console.log('Base fabric stock deducted:', newBaseStock, 'from', baseFabricStock)
+      } else {
+        console.warn('Could not find base fabric for finished fabric:', productionOrder.finished_fabric_id)
+      }
     }
 
     // Return success response

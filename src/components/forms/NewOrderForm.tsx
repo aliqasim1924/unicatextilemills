@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { XMarkIcon, ExclamationTriangleIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import { logBusinessEvent, generateOrderAuditDescription } from '@/lib/utils/auditTrail'
+import { numberingUtils } from '@/lib/utils/numberingUtils'
 
 interface Customer {
   id: string
@@ -248,22 +249,13 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
     return result
   }
 
-  const generateOrderNumber = (): string => {
-    const today = new Date()
-    const year = today.getFullYear().toString().slice(-2)
-    const month = (today.getMonth() + 1).toString().padStart(2, '0')
-    const day = today.getDate().toString().padStart(2, '0')
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
-    return `ORD${year}${month}${day}${random}`
-  }
-
   const createProductionOrders = async (orderId: string, fabric: FinishedFabric, allocationPlan: AllocationPlan) => {
     let weavingOrderId = null
 
     // Step 1: Create weaving production order if needed (only for base fabric shortage)
     if (allocationPlan.needs_weaving_production) {
       const weavingOrder = {
-        internal_order_number: `${generateOrderNumber()}-W`,
+        internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
         production_type: 'weaving',
         customer_order_id: orderId,
         base_fabric_id: fabric.base_fabric_id,
@@ -292,7 +284,7 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
     // Step 2: Create coating production order if needed
     if (allocationPlan.needs_coating_production) {
       const coatingOrder = {
-        internal_order_number: `${generateOrderNumber()}-C`,
+        internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
         production_type: 'coating',
         customer_order_id: orderId,
         finished_fabric_id: fabric.id,
@@ -374,7 +366,7 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
         customer_po_number: formData.customer_po_number,
         priority_override: formData.priority_override,
         notes: formData.notes,
-        internal_order_number: generateOrderNumber(),
+        internal_order_number: await numberingUtils.generateOrderNumber(),
         order_status: 'pending',
         quantity_allocated: allocationPlan.stock_allocated
       }

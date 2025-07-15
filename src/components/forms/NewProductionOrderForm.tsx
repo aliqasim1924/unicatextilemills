@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import { logBusinessEvent } from '@/lib/utils/auditTrail'
+import { numberingUtils } from '@/lib/utils/numberingUtils'
 
 interface NewProductionOrderFormProps {
   isOpen: boolean
@@ -155,13 +156,6 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
     }
   }
 
-  const generateOrderNumber = (): string => {
-    const now = new Date()
-    const dateStr = now.toISOString().slice(2, 10).replace(/-/g, '')
-    const timeStr = now.getTime().toString().slice(-3)
-    return `ORD${dateStr}${timeStr}`
-  }
-
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {}
 
@@ -221,7 +215,7 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
 
   const createWeavingOrder = async () => {
     const orderData = {
-      internal_order_number: `${generateOrderNumber()}-W`,
+      internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
       production_type: 'weaving',
       customer_order_id: null, // Manual stock building order
       base_fabric_id: formData.fabric_id,
@@ -275,7 +269,7 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
       const shortage = formData.quantity_required - baseAvailable
 
       const weavingData = {
-        internal_order_number: `${generateOrderNumber()}-W`,
+        internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
         production_type: 'weaving',
         customer_order_id: null,
         base_fabric_id: selectedFabric?.base_fabric_id,
@@ -315,15 +309,9 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
       }
     }
 
-    // Create coating order
-    const colorInfo = formData.coating_color ? `Color: ${formData.coating_color}` : ''
-    const orderNotes = [
-      colorInfo,
-      formData.notes || 'Manual stock building order'
-    ].filter(Boolean).join(' | ')
-
+    // Create the coating order
     const coatingData = {
-      internal_order_number: `${generateOrderNumber()}-C`,
+      internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
       production_type: 'coating',
       customer_order_id: null,
       base_fabric_id: null,
@@ -333,46 +321,32 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
       production_status: weavingOrderId ? 'waiting_materials' : 'pending',
       priority_level: formData.priority_level,
       target_completion_date: formData.target_completion_date,
-      notes: orderNotes,
-      production_sequence: 2,
+      notes: formData.notes || 'Manual coating order',
+      production_sequence: weavingOrderId ? 2 : 1,
       linked_production_order_id: weavingOrderId
     }
 
-    const { data: coatingResponse, error: coatingError } = await supabase
+    const { data: response, error } = await supabase
       .from('production_orders')
       .insert([coatingData])
       .select('id')
       .single()
 
-    if (coatingError) throw coatingError
+    if (error) throw error
 
     // Log coating order creation
-    if (coatingResponse?.id) {
-      const selectedFabric = finishedFabrics.find(f => f.id === formData.fabric_id)
-      const fabricName = selectedFabric?.name || 'Unknown Fabric'
-
-      // Log order received
-      await logBusinessEvent.productionOrder.created(coatingResponse.id, {
+    if (response?.id) {
+      await logBusinessEvent.productionOrder.created(response.id, {
         orderNumber: coatingData.internal_order_number,
         type: 'coating',
-        fabric: fabricName,
+        fabric: selectedFabric?.name || 'Unknown Fabric',
         quantity: formData.quantity_required
       })
 
-      // Log production planning
-      await logBusinessEvent.productionOrder.planned(coatingResponse.id, {
+      await logBusinessEvent.productionOrder.planned(response.id, {
         targetDate: formData.target_completion_date,
         orderNumber: coatingData.internal_order_number
       })
-
-      // Log base fabric allocation if available from stock
-      if (!weavingOrderId && selectedFabric?.base_fabrics && analysisResult?.baseAvailable && analysisResult.baseAvailable >= formData.quantity_required) {
-        await logBusinessEvent.productionOrder.baseFabricAllocated(coatingResponse.id, {
-          fabric: selectedFabric.base_fabrics.name,
-          quantity: formData.quantity_required,
-          batchNumber: selectedFabric.base_fabrics.last_batch_number || undefined
-        })
-      }
     }
   }
 

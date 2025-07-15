@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import { generateOrderAuditDescription, logBusinessEvent } from '@/lib/utils/auditTrail'
+import { numberingUtils } from '@/lib/utils/numberingUtils'
 
 interface OrderActionButtonsProps {
   order: {
@@ -262,10 +263,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
           // Generate delivery note number if not provided
           let deliveryNoteNumber = dispatchData.delivery_note_number
           if (!deliveryNoteNumber) {
-            const now = new Date()
-            const dateStr = now.toISOString().slice(2, 10).replace(/-/g, '')
-            const timeStr = now.getTime().toString().slice(-4)
-            deliveryNoteNumber = `DN${dateStr}${timeStr}`
+            deliveryNoteNumber = await numberingUtils.generateDeliveryNoteNumber()
             
             // Update the order with the generated delivery note number
             await supabase
