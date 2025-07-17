@@ -942,13 +942,16 @@ export const loomTrackingUtils = {
     // Get production order details to get fabric_id and customer order context
     const { data: productionOrder, error: orderError } = await supabase
       .from('production_orders')
-      .select('finished_fabric_id, customer_order_id, customer_orders(internal_order_number, color, customers(name))')
+      .select('finished_fabric_id, customer_order_id, customer_color, customer_order_item_id, customer_orders(internal_order_number, color, customers(name))')
       .eq('id', completionData.productionOrderId)
       .single()
 
     if (orderError) {
       throw new Error(`Failed to get production order: ${orderError.message}`)
     }
+
+    console.log('Production order customer_color:', productionOrder.customer_color)
+    console.log('Production order customer_order_item_id:', productionOrder.customer_order_item_id)
 
     const fabricId = productionOrder?.finished_fabric_id
     if (!fabricId) {
@@ -1032,6 +1035,8 @@ export const loomTrackingUtils = {
           remaining_length: 50,
           quality_grade: 'A',
           roll_type: 'full_50m',
+          customer_color: productionOrder.customer_color,
+          customer_order_item_id: productionOrder.customer_order_item_id,
           qr_code: '' // Temporary empty QR code
         })
         .select()
@@ -1101,6 +1106,8 @@ export const loomTrackingUtils = {
             remaining_length: rollDetail.rollLength,
             quality_grade: 'A',
             roll_type: 'short',
+            customer_color: productionOrder.customer_color,
+            customer_order_item_id: productionOrder.customer_order_item_id,
             qr_code: '' // Temporary empty QR code
           })
           .select()
@@ -1171,6 +1178,8 @@ export const loomTrackingUtils = {
             remaining_length: rollDetail.rollLength,
             quality_grade: 'B',
             roll_type: rollDetail.rollLength >= 50 ? 'full_50m' : 'short',
+            customer_color: productionOrder.customer_color,
+            customer_order_item_id: productionOrder.customer_order_item_id,
             qr_code: '' // Temporary empty QR code
           })
           .select()

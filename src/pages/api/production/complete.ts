@@ -80,6 +80,7 @@ export default async function handler(
     console.log('Customer color for production:', customerColor)
     console.log('Production order customer_color field:', productionOrder.customer_color)
     console.log('Customer order item ID:', customerOrderItemId)
+    console.log('Full production order object:', JSON.stringify(productionOrder, null, 2))
 
     // Create batch record with customer color information
     const { data: batch, error: batchError } = await supabase
