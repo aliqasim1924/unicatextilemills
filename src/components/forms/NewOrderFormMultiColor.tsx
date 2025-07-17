@@ -497,7 +497,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           <h3 className="text-lg font-medium text-gray-900">Create New Customer Order</h3>
           <button
             onClick={onClose}
-            className="text-gray-600 hover:text-gray-700"
+            className="text-gray-900 hover:text-gray-700"
           >
             <XMarkIcon className="h-6 w-6" />
           </button>
@@ -523,7 +523,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                     <select
                       value={formData.customer_id}
                       onChange={(e) => handleInputChange('customer_id', e.target.value)}
-                      className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                      className={`w-full px-3 py-2 border rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                         errors.customer_id ? 'border-red-300' : 'border-gray-300'
                       }`}
                     >
@@ -548,7 +548,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                       type="text"
                       value={formData.customer_po_number}
                       onChange={(e) => handleInputChange('customer_po_number', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Enter customer PO number"
                     />
                   </div>
@@ -562,7 +562,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                       type="date"
                       value={formData.due_date}
                       onChange={(e) => handleInputChange('due_date', e.target.value)}
-                      className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                      className={`w-full px-3 py-2 border rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                         errors.due_date ? 'border-red-300' : 'border-gray-300'
                       }`}
                     />
@@ -579,7 +579,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                     <select
                       value={formData.priority_override}
                       onChange={(e) => handleInputChange('priority_override', parseInt(e.target.value))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value={0}>Normal Priority</option>
                       <option value={1}>High Priority</option>
@@ -597,7 +597,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                     value={formData.notes}
                     onChange={(e) => handleInputChange('notes', e.target.value)}
                     rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Enter any special instructions or notes"
                   />
                 </div>
@@ -646,7 +646,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                           <select
                             value={item.finished_fabric_id}
                             onChange={(e) => updateOrderItem(item.id, { finished_fabric_id: e.target.value })}
-                            className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                            className={`w-full px-3 py-2 border rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                               errors[`item_${index}_fabric`] ? 'border-red-300' : 'border-gray-300'
                             }`}
                           >
@@ -690,7 +690,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                             step="0.01"
                             value={item.quantity_ordered || ''}
                             onChange={(e) => updateOrderItem(item.id, { quantity_ordered: parseFloat(e.target.value) || 0 })}
-                            className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                            className={`w-full px-3 py-2 border rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                               errors[`item_${index}_quantity`] ? 'border-red-300' : 'border-gray-300'
                             }`}
                             placeholder="0.00"
@@ -711,7 +711,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                             step="0.01"
                             value={item.unit_price || ''}
                             onChange={(e) => updateOrderItem(item.id, { unit_price: parseFloat(e.target.value) || undefined })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="0.00"
                           />
                         </div>
@@ -726,7 +726,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                           type="text"
                           value={item.notes || ''}
                           onChange={(e) => updateOrderItem(item.id, { notes: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           placeholder="Any specific notes for this item"
                         />
                       </div>
@@ -754,7 +754,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  className="px-4 py-2 text-sm font-medium text-gray-900 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   Cancel
                 </button>

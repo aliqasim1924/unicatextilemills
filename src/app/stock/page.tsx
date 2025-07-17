@@ -402,25 +402,51 @@ export default function StockPage() {
   const totalFinishedFabricStock = finishedFabrics.reduce((sum, fabric) => sum + fabric.stock_quantity, 0)
   const lowStockItems = [...baseFabrics, ...finishedFabrics].filter(fabric => isLowStock(fabric.stock_quantity, fabric.minimum_stock))
 
-  // Color-wise stock calculation
-  const colorWiseStock = finishedFabrics.reduce((acc, fabric) => {
-    const color = fabric.color || 'Natural'
+  // Color-wise stock calculation based on actual fabric rolls
+  const colorWiseStock = finishedFabricRolls.reduce((acc, roll) => {
+    const color = roll.customer_color || roll.finished_fabrics?.color || 'Natural'
+    const fabricName = roll.finished_fabrics?.name || 'Unknown Fabric'
+    const availableLength = roll.remaining_length || 0
+    
     if (!acc[color]) {
       acc[color] = {
         color,
         totalStock: 0,
-        fabrics: []
+        fabricBreakdown: {}
       }
     }
-    if (fabric.stock_quantity > 0) {
-      acc[color].totalStock += fabric.stock_quantity
-      acc[color].fabrics.push(fabric)
+    
+    if (availableLength > 0) {
+      acc[color].totalStock += availableLength
+      
+      if (!acc[color].fabricBreakdown[fabricName]) {
+        acc[color].fabricBreakdown[fabricName] = {
+          name: fabricName,
+          totalStock: 0,
+          rollCount: 0
+        }
+      }
+      
+      acc[color].fabricBreakdown[fabricName].totalStock += availableLength
+      acc[color].fabricBreakdown[fabricName].rollCount += 1
     }
+    
     return acc
-  }, {} as Record<string, { color: string; totalStock: number; fabrics: FinishedFabric[] }>)
+  }, {} as Record<string, { 
+    color: string; 
+    totalStock: number; 
+    fabricBreakdown: Record<string, { name: string; totalStock: number; rollCount: number }> 
+  }>)
 
-  // Filter out colors with 0 stock
-  const availableColors = Object.values(colorWiseStock).filter(colorData => colorData.totalStock > 0)
+  // Filter out colors with 0 stock and sort by total stock
+  type ColorData = { 
+    color: string; 
+    totalStock: number; 
+    fabricBreakdown: Record<string, { name: string; totalStock: number; rollCount: number }> 
+  }
+  const availableColors: ColorData[] = Object.values(colorWiseStock)
+    .filter((colorData: any): colorData is ColorData => colorData.totalStock > 0)
+    .sort((a, b) => b.totalStock - a.totalStock)
 
   if (loading) {
     return (
@@ -1014,7 +1040,7 @@ export default function StockPage() {
                               {roll.finished_fabrics?.name || 'N/A'}
                             </div>
                             <div className="text-sm text-gray-500">
-                              {roll.finished_fabrics?.color || 'Natural'}
+                              {roll.customer_color || roll.finished_fabrics?.color || 'Natural'}
                             </div>
                             <div className="flex items-center mt-1">
                               <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -1131,15 +1157,15 @@ export default function StockPage() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-900">
-                            {colorData.fabrics.length} fabric{colorData.fabrics.length !== 1 ? 's' : ''}
+                            {Object.keys(colorData.fabricBreakdown).length} fabric{Object.keys(colorData.fabricBreakdown).length !== 1 ? 's' : ''}
                           </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="space-y-1">
-                            {colorData.fabrics.map((fabric) => (
-                              <div key={fabric.id} className="text-sm">
-                                <span className="font-medium text-gray-900">{fabric.name}</span>
-                                <span className="text-gray-600 ml-2">({fabric.stock_quantity}m)</span>
+                            {Object.values(colorData.fabricBreakdown).map((fabricInfo) => (
+                              <div key={fabricInfo.name} className="text-sm">
+                                <span className="font-medium text-gray-900">{fabricInfo.name}</span>
+                                <span className="text-gray-600 ml-2">({fabricInfo.totalStock}m in {fabricInfo.rollCount} roll{fabricInfo.rollCount !== 1 ? 's' : ''})</span>
                               </div>
                             ))}
                           </div>
