@@ -317,13 +317,15 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
 
       // On order confirmation, create production orders
       if (pendingAction.action === 'confirm') {
-        // Fetch the full customer order details (including order items and finished fabric)
+        // Fetch the full customer order details with order items and their fabric details
         const { data: orderDetails, error: orderDetailsError } = await supabase
           .from('customer_orders')
           .select(`
             *, 
-            finished_fabrics(*, base_fabrics(*)),
-            customer_order_items(*)
+            customer_order_items(
+              *,
+              finished_fabrics(*, base_fabrics(*))
+            )
           `)
           .eq('id', order.id)
           .single()
@@ -336,15 +338,22 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
         }
 
         for (const orderItem of orderItems) {
+          // Get the specific fabric for this order item
+          const fabric = orderItem.finished_fabrics
+          if (!fabric) {
+            console.error(`No fabric found for order item ${orderItem.id}`)
+            continue
+          }
+
           // Calculate allocation plan for this specific item
-          const fabric = orderDetails.finished_fabrics
-          const availableStock = fabric?.stock_quantity || 0
+          const availableStock = fabric.stock_quantity || 0
           const stockAllocated = Math.min(orderItem.quantity_ordered, availableStock)
           const productionRequired = Math.max(0, orderItem.quantity_ordered - availableStock)
-          let baseFabricAvailable = fabric?.base_fabrics?.stock_quantity || 0
+          let baseFabricAvailable = fabric.base_fabrics?.stock_quantity || 0
           let needsWeavingProduction = false
           let baseFabricShortage = 0
-          if (productionRequired > 0 && fabric?.base_fabrics) {
+          
+          if (productionRequired > 0 && fabric.base_fabrics) {
             baseFabricShortage = Math.max(0, productionRequired - baseFabricAvailable)
             needsWeavingProduction = baseFabricShortage > 0
           } else if (productionRequired > 0) {
@@ -361,7 +370,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
               customer_order_id: order.id,
               customer_order_item_id: orderItem.id,
               customer_color: orderItem.color,
-              base_fabric_id: fabric?.base_fabric_id,
+              base_fabric_id: fabric.base_fabric_id,
               quantity_required: baseFabricShortage,
               quantity_produced: 0,
               production_status: 'pending',
@@ -387,7 +396,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
               customer_order_id: order.id,
               customer_order_item_id: orderItem.id,
               customer_color: orderItem.color,
-              finished_fabric_id: fabric?.id,
+              finished_fabric_id: fabric.id,
               quantity_required: productionRequired,
               quantity_produced: 0,
               production_status: needsWeavingProduction ? 'waiting_materials' : 'pending',
@@ -401,6 +410,34 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
               .from('production_orders')
               .insert([coatingOrder])
             if (coatingError) throw coatingError
+          }
+
+          // Update stock quantities for this specific item
+          if (stockAllocated > 0) {
+            // Update finished fabric stock
+            const { error: stockError } = await supabase
+              .from('finished_fabrics')
+              .update({ 
+                stock_quantity: fabric.stock_quantity - stockAllocated 
+              })
+              .eq('id', fabric.id)
+
+            if (stockError) {
+              console.error(`Failed to update stock for fabric ${fabric.id}:`, stockError)
+            }
+
+            // Log stock movement
+            await supabase
+              .from('stock_movements')
+              .insert([{
+                fabric_type: 'finished_fabric',
+                fabric_id: fabric.id,
+                movement_type: 'allocation',
+                quantity: -stockAllocated,
+                reference_id: order.id,
+                reference_type: 'customer_order',
+                notes: `Stock allocated to customer order ${orderDetails.internal_order_number} - Color: ${orderItem.color}`
+              }])
           }
         } // End of for loop
       }
@@ -557,7 +594,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
 
   if (availableActions.length === 0) {
     return (
-      <div className="text-xs text-gray-700">
+      <div className="text-xs text-gray-900">
         No actions available
       </div>
     )
@@ -608,7 +645,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
               
               <form onSubmit={handlePinSubmit}>
                 <div className="mb-4">
-                  <label htmlFor="pin" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="pin" className="block text-sm font-medium text-gray-900 mb-2">
                     Enter PIN to confirm:
                   </label>
                   <input
@@ -677,7 +714,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
               
               <form onSubmit={handleDispatchSubmit} className="space-y-4">
                 <div>
-                  <label htmlFor="invoice_number" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="invoice_number" className="block text-sm font-medium text-gray-900 mb-1">
                     Invoice Number *
                   </label>
                   <input
@@ -691,7 +728,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
                 </div>
                 
                 <div>
-                  <label htmlFor="gate_pass_number" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="gate_pass_number" className="block text-sm font-medium text-gray-900 mb-1">
                     Gate Pass Number *
                   </label>
                   <input
@@ -705,7 +742,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
                 </div>
                 
                 <div>
-                  <label htmlFor="delivery_note_number" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="delivery_note_number" className="block text-sm font-medium text-gray-900 mb-1">
                     Delivery Note Number
                   </label>
                   <input
@@ -718,7 +755,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
                 </div>
                 
                 <div>
-                  <label htmlFor="dispatch_date" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="dispatch_date" className="block text-sm font-medium text-gray-900 mb-1">
                     Dispatch Date *
                   </label>
                   <input
@@ -732,7 +769,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
                 </div>
                 
                 <div>
-                  <label htmlFor="dispatch_notes" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="dispatch_notes" className="block text-sm font-medium text-gray-900 mb-1">
                     Dispatch Notes
                   </label>
                   <textarea

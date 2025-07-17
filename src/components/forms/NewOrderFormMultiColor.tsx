@@ -71,8 +71,6 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [productionMessages, setProductionMessages] = useState<string[]>([])
-  
   const [formData, setFormData] = useState<OrderFormData>({
     customer_id: '',
     due_date: '',
@@ -106,7 +104,6 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         }]
       })
       setErrors({})
-      setProductionMessages([])
     }
   }, [isOpen])
 
@@ -409,7 +406,6 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       }
 
       // Create customer order items and calculate allocations
-      const allProductionMessages: string[] = []
       const orderItemsWithAllocations = []
       let totalStockAllocated = 0
 
@@ -450,14 +446,13 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         .update({ quantity_allocated: totalStockAllocated })
         .eq('id', customerOrder.id)
 
-      // Create production orders and update stock for each item
+      // Log stock allocation for each item (no production orders created yet)
       for (let i = 0; i < formData.order_items.length; i++) {
         const item = formData.order_items[i]
-        const insertedItem = insertedItems[i]
         const fabric = fabrics.find(f => f.id === item.finished_fabric_id)!
         const allocationPlan = calculateAllocationPlan(fabric, item.quantity_ordered)
 
-        // Log initial allocation if stock was allocated
+        // Log initial allocation if stock was allocated (but don't update stock yet)
         if (allocationPlan.stock_allocated > 0) {
           await logBusinessEvent.customerOrder.stockAllocated(customerOrder.id, {
             quantity: allocationPlan.stock_allocated,
@@ -466,20 +461,8 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           })
         }
 
-        // Create production orders if needed
-        if (allocationPlan.needs_coating_production || allocationPlan.needs_weaving_production) {
-          const productionResult = await createProductionOrders(
-            customerOrder.id,
-            insertedItem.id,
-            fabric,
-            allocationPlan,
-            item.color
-          )
-          allProductionMessages.push(...productionResult.messages)
-        }
-
-        // Update stock quantities
-        await updateStockQuantities(fabric, allocationPlan, customerOrder.id)
+        // Note: Production orders will be created only when order is confirmed
+        // Note: Stock will be allocated only when order is confirmed
       }
 
       // Log business event
@@ -490,19 +473,9 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         quantity: calculateTotalQuantity()
       })
 
-      // Show production messages if any were created
-      if (allProductionMessages.length > 0) {
-        setProductionMessages(allProductionMessages)
-        // Clear messages after 10 seconds
-        setTimeout(() => {
-          setProductionMessages([])
-          onOrderCreated()
-          onClose()
-        }, 10000)
-      } else {
-        onOrderCreated()
-        onClose()
-      }
+      // Order created successfully - production orders will be created upon confirmation
+      onOrderCreated()
+      onClose()
     } catch (error) {
       console.error('Error creating order:', error)
       setErrors({ submit: error instanceof Error ? error.message : 'Unknown error occurred' })
@@ -804,23 +777,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                 </div>
               )}
 
-              {productionMessages.length > 0 && (
-                <div className="p-4 text-sm text-green-700 bg-green-100 border border-green-200 rounded-md">
-                  <div className="flex items-center mb-2">
-                    <CheckCircleIcon className="h-5 w-5 mr-2" />
-                    <span className="font-medium">Order Created Successfully!</span>
-                  </div>
-                  <div className="ml-7">
-                    <p className="mb-2">Production orders have been automatically created:</p>
-                    <ul className="space-y-1">
-                      {productionMessages.map((message, index) => (
-                        <li key={index} className="text-xs">{message}</li>
-                      ))}
-                    </ul>
-                    <p className="mt-2 text-xs italic">This dialog will close automatically in 10 seconds...</p>
-                  </div>
-                </div>
-              )}
+
             </form>
           )}
         </div>

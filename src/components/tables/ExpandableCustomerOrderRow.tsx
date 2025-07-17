@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { 
   EyeIcon,
   PencilIcon,
@@ -20,6 +20,7 @@ import {
 } from '@heroicons/react/24/outline'
 import OrderActionButtons from '@/components/orders/OrderActionButtons'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
+import { supabase } from '@/lib/supabase/client'
 
 interface CustomerOrder {
   id: string
@@ -47,6 +48,22 @@ interface CustomerOrder {
     width_meters: number
     color: string | null
     coating_type: string | null
+  }
+}
+
+interface CustomerOrderItem {
+  id: string
+  customer_order_id: string
+  finished_fabric_id: string
+  color: string
+  quantity_ordered: number
+  quantity_allocated: number
+  unit_price: number | null
+  notes: string | null
+  finished_fabrics?: {
+    name: string
+    gsm: number
+    width_meters: number
   }
 }
 
@@ -158,6 +175,8 @@ export default function ExpandableCustomerOrderRow({
   onOrderUpdated 
 }: ExpandableCustomerOrderRowProps) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const [orderItems, setOrderItems] = useState<CustomerOrderItem[]>([])
+  const [loadingItems, setLoadingItems] = useState(false)
 
   const statusInfo = getStatusConfig(order.order_status)
   const StatusIcon = statusInfo.icon
@@ -175,7 +194,41 @@ export default function ExpandableCustomerOrderRow({
     })
   }
 
+  const loadOrderItems = async () => {
+    if (orderItems.length > 0) return // Already loaded
+    
+    try {
+      setLoadingItems(true)
+      const { data, error } = await supabase
+        .from('customer_order_items')
+        .select(`
+          *,
+          finished_fabrics (
+            name,
+            gsm,
+            width_meters
+          )
+        `)
+        .eq('customer_order_id', order.id)
+        .order('created_at')
+
+      if (error) {
+        console.error('Error loading order items:', error)
+        return
+      }
+
+      setOrderItems(data || [])
+    } catch (error) {
+      console.error('Error loading order items:', error)
+    } finally {
+      setLoadingItems(false)
+    }
+  }
+
   const toggleExpanded = () => {
+    if (!isExpanded) {
+      loadOrderItems()
+    }
     setIsExpanded(!isExpanded)
   }
 
@@ -206,7 +259,7 @@ export default function ExpandableCustomerOrderRow({
                 </span>
               </div>
               {order.customer_po_number && (
-                <div className="text-sm text-gray-700">
+                <div className="text-sm text-gray-900">
                   PO: {order.customer_po_number}
                 </div>
               )}
@@ -219,7 +272,7 @@ export default function ExpandableCustomerOrderRow({
             {order.customers?.name || 'Unknown Customer'}
           </div>
           {order.customers?.contact_person && (
-            <div className="text-sm text-gray-700">
+            <div className="text-sm text-gray-900">
               {order.customers.contact_person}
             </div>
           )}
@@ -229,9 +282,15 @@ export default function ExpandableCustomerOrderRow({
           <div className="text-sm text-gray-900">
             {order.finished_fabrics?.name || 'Unknown Product'}
           </div>
-          <div className="text-sm text-gray-700">
+          <div className="text-sm text-gray-900">
             {order.finished_fabrics?.gsm}GSM • {order.finished_fabrics?.width_meters}m
-            {order.color && ` • ${order.color}`}
+            {orderItems.length > 0 ? (
+              <span className="ml-1">
+                • {orderItems.length} color{orderItems.length > 1 ? 's' : ''}: {orderItems.map(item => item.color).join(', ')}
+              </span>
+            ) : (
+              order.color && ` • ${order.color}`
+            )}
           </div>
         </td>
 
@@ -240,9 +299,9 @@ export default function ExpandableCustomerOrderRow({
             <div className="flex-1">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-900">{order.quantity_allocated}m</span>
-                <span className="text-gray-700">{allocationPercentage}%</span>
+                <span className="text-gray-900">{allocationPercentage}%</span>
               </div>
-              <div className="text-sm text-gray-700 mb-1">
+              <div className="text-sm text-gray-900 mb-1">
                 of {order.quantity_ordered}m ordered
               </div>
               <div className="mt-1">
@@ -302,12 +361,12 @@ export default function ExpandableCustomerOrderRow({
                     Customer Information
                   </h4>
                   <div className="space-y-1 text-sm">
-                    <div><span className="text-gray-700">Name:</span> <span className="text-gray-900">{order.customers?.name || 'Unknown'}</span></div>
+                    <div><span className="text-gray-900">Name:</span> <span className="text-gray-900">{order.customers?.name || 'Unknown'}</span></div>
                     {order.customers?.contact_person && (
-                      <div><span className="text-gray-700">Contact:</span> <span className="text-gray-900">{order.customers.contact_person}</span></div>
+                      <div><span className="text-gray-900">Contact:</span> <span className="text-gray-900">{order.customers.contact_person}</span></div>
                     )}
                     {order.customer_po_number && (
-                      <div><span className="text-gray-700">PO Number:</span> <span className="text-gray-900">{order.customer_po_number}</span></div>
+                      <div><span className="text-gray-900">PO Number:</span> <span className="text-gray-900">{order.customer_po_number}</span></div>
                     )}
                   </div>
                 </div>
@@ -315,19 +374,46 @@ export default function ExpandableCustomerOrderRow({
                 <div className="bg-white rounded-lg p-4 border">
                   <h4 className="text-sm font-medium text-gray-900 mb-2 flex items-center">
                     <CubeIcon className="h-4 w-4 mr-1" />
-                    Product Specifications
+                    Order Items ({orderItems.length > 0 ? orderItems.length : 'Legacy'})
                   </h4>
-                  <div className="space-y-1 text-sm">
-                    <div><span className="text-gray-700">Fabric:</span> <span className="text-gray-900">{order.finished_fabrics?.name || 'Unknown'}</span></div>
-                    <div><span className="text-gray-700">GSM:</span> <span className="text-gray-900">{order.finished_fabrics?.gsm || 'N/A'}</span></div>
-                    <div><span className="text-gray-700">Width:</span> <span className="text-gray-900">{order.finished_fabrics?.width_meters || 'N/A'}m</span></div>
-                    {order.color && (
-                      <div><span className="text-gray-700">Requested Color:</span> <span className="text-gray-900 font-medium">{order.color}</span></div>
-                    )}
-                    {order.finished_fabrics?.coating_type && (
-                      <div><span className="text-gray-700">Coating:</span> <span className="text-gray-900">{order.finished_fabrics.coating_type}</span></div>
-                    )}
-                  </div>
+                  {loadingItems ? (
+                    <div className="text-sm text-gray-900">Loading order items...</div>
+                  ) : orderItems.length > 0 ? (
+                    <div className="space-y-3">
+                      {orderItems.map((item, index) => (
+                        <div key={item.id} className="bg-gray-50 p-3 rounded border">
+                          <div className="flex justify-between items-start mb-2">
+                            <span className="text-sm font-medium text-gray-900">Item {index + 1}</span>
+                            <span className="text-sm text-gray-900 font-medium">{item.quantity_ordered}m</span>
+                          </div>
+                          <div className="space-y-1 text-sm">
+                            <div><span className="text-gray-900">Fabric:</span> <span className="text-gray-900">{item.finished_fabrics?.name || order.finished_fabrics?.name || 'Unknown'}</span></div>
+                            <div><span className="text-gray-900">Color:</span> <span className="text-gray-900 font-medium">{item.color}</span></div>
+                            <div><span className="text-gray-900">GSM:</span> <span className="text-gray-900">{item.finished_fabrics?.gsm || order.finished_fabrics?.gsm || 'N/A'}</span></div>
+                            <div><span className="text-gray-900">Width:</span> <span className="text-gray-900">{item.finished_fabrics?.width_meters || order.finished_fabrics?.width_meters || 'N/A'}m</span></div>
+                            {item.unit_price && (
+                              <div><span className="text-gray-900">Unit Price:</span> <span className="text-gray-900">${item.unit_price.toFixed(2)}</span></div>
+                            )}
+                            {item.notes && (
+                              <div><span className="text-gray-900">Notes:</span> <span className="text-gray-900">{item.notes}</span></div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-1 text-sm">
+                      <div><span className="text-gray-900">Fabric:</span> <span className="text-gray-900">{order.finished_fabrics?.name || 'Unknown'}</span></div>
+                      <div><span className="text-gray-900">GSM:</span> <span className="text-gray-900">{order.finished_fabrics?.gsm || 'N/A'}</span></div>
+                      <div><span className="text-gray-900">Width:</span> <span className="text-gray-900">{order.finished_fabrics?.width_meters || 'N/A'}m</span></div>
+                      {order.color && (
+                        <div><span className="text-gray-900">Requested Color:</span> <span className="text-gray-900 font-medium">{order.color}</span></div>
+                      )}
+                      {order.finished_fabrics?.coating_type && (
+                        <div><span className="text-gray-900">Coating:</span> <span className="text-gray-900">{order.finished_fabrics.coating_type}</span></div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-white rounded-lg p-4 border">
@@ -336,9 +422,9 @@ export default function ExpandableCustomerOrderRow({
                     Timeline
                   </h4>
                                       <div className="space-y-1 text-sm">
-                      <div><span className="text-gray-700">Order Date:</span> <span className="text-gray-900">{formatDate(order.created_at)}</span></div>
-                      <div><span className="text-gray-700">Due Date:</span> <span className="text-gray-900">{formatDate(order.due_date)}</span></div>
-                      <div><span className="text-gray-700">Last Updated:</span> <span className="text-gray-900">{formatDate(order.updated_at)}</span></div>
+                      <div><span className="text-gray-900">Order Date:</span> <span className="text-gray-900">{formatDate(order.created_at)}</span></div>
+                      <div><span className="text-gray-900">Due Date:</span> <span className="text-gray-900">{formatDate(order.due_date)}</span></div>
+                      <div><span className="text-gray-900">Last Updated:</span> <span className="text-gray-900">{formatDate(order.updated_at)}</span></div>
                     </div>
                 </div>
 
@@ -415,27 +501,27 @@ export default function ExpandableCustomerOrderRow({
                   <h4 className="text-sm font-medium text-gray-900 mb-3">Order Summary</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-gray-700">Ordered:</span>
+                      <span className="text-gray-900">Ordered:</span>
                       <span className="font-medium text-gray-900">{order.quantity_ordered}m</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-700">Allocated:</span>
+                      <span className="text-gray-900">Allocated:</span>
                       <span className="font-medium text-gray-900">{order.quantity_allocated}m</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-700">Remaining:</span>
+                      <span className="text-gray-900">Remaining:</span>
                       <span className="font-medium text-gray-900">{Math.max(0, order.quantity_ordered - order.quantity_allocated)}m</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-700">Progress:</span>
+                      <span className="text-gray-900">Progress:</span>
                       <span className="font-medium text-gray-900">{allocationPercentage}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-700">Priority:</span>
+                      <span className="text-gray-900">Priority:</span>
                       <span className={`font-medium ${priorityInfo.color}`}>{priorityInfo.label}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-700">Status:</span>
+                      <span className="text-gray-900">Status:</span>
                       <span className="font-medium text-gray-900">{statusInfo.label}</span>
                     </div>
                   </div>
