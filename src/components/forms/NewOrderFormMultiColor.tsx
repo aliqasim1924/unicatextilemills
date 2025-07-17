@@ -534,7 +534,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-2 text-gray-800">Loading form data...</span>
+              <span className="ml-2 text-gray-900">Loading form data...</span>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -544,7 +544,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Customer Selection */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-900 mb-1">
                       Customer *
                     </label>
                     <select
@@ -568,7 +568,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                   {/* Customer PO Number */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-900 mb-1">
                       Customer PO Number
                     </label>
                     <input
@@ -582,7 +582,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                   {/* Due Date */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-900 mb-1">
                       Due Date *
                     </label>
                     <input
@@ -600,7 +600,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                   {/* Priority Override */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-900 mb-1">
                       Priority Override
                     </label>
                     <select
@@ -617,7 +617,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                 {/* Notes */}
                 <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-900 mb-1">
                     Order Notes
                   </label>
                   <textarea
@@ -652,7 +652,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                   {formData.order_items.map((item, index) => (
                     <div key={item.id} className="bg-white p-4 rounded-lg border border-gray-200">
                       <div className="flex items-center justify-between mb-3">
-                        <h5 className="text-md font-medium text-gray-800">Item {index + 1}</h5>
+                        <h5 className="text-md font-medium text-gray-900">Item {index + 1}</h5>
                         {formData.order_items.length > 1 && (
                           <button
                             type="button"
@@ -667,7 +667,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         {/* Finished Fabric */}
                         <div className="md:col-span-1">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
                             Finished Fabric *
                           </label>
                           <select
@@ -691,7 +691,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                         {/* Color */}
                         <div className="md:col-span-1">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
                             Color *
                           </label>
                           <ColorDropdown
@@ -708,7 +708,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                         {/* Quantity */}
                         <div className="md:col-span-1">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
                             Quantity (meters) *
                           </label>
                           <input
@@ -729,7 +729,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                         {/* Unit Price (Optional) */}
                         <div className="md:col-span-1">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
                             Unit Price (Optional)
                           </label>
                           <input
@@ -746,7 +746,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                       {/* Item Notes */}
                       <div className="mt-3">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-gray-900 mb-1">
                           Item Notes
                         </label>
                         <input
@@ -767,8 +767,8 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
 
                 {/* Order Summary */}
                 <div className="mt-6 bg-gray-100 p-4 rounded-lg">
-                  <h5 className="text-md font-medium text-gray-800 mb-2">Order Summary</h5>
-                  <div className="text-sm text-gray-800">
+                  <h5 className="text-md font-medium text-gray-900 mb-2">Order Summary</h5>
+                  <div className="text-sm text-gray-900">
                     <p>Total Items: {formData.order_items.length}</p>
                     <p>Total Quantity: {calculateTotalQuantity().toFixed(2)} meters</p>
                     <p>Colors: {formData.order_items.map(item => item.color).filter(Boolean).join(', ') || 'None selected'}</p>
