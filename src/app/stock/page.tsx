@@ -451,6 +451,14 @@ export default function StockPage() {
     .filter((colorData: any): colorData is ColorData => colorData.totalStock > 0)
     .sort((a, b) => b.totalStock - a.totalStock)
 
+  // Calculate total stock for each finished fabric by summing all rolls
+  const finishedFabricTotals = finishedFabrics.map(fabric => {
+    const totalStock = finishedFabricRolls
+      .filter(roll => roll.fabric_id === fabric.id)
+      .reduce((sum, roll) => sum + (roll.remaining_length || 0), 0)
+    return { ...fabric, totalStock }
+  })
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -648,12 +656,11 @@ export default function StockPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredFinishedFabrics.map((fabric) => (
+                  {finishedFabricTotals.map((fabric) => (
                     <tr key={fabric.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
                           <div className="text-sm font-medium text-gray-900">{fabric.name}</div>
-                          <div className="text-sm text-gray-700">{fabric.color || 'Unknown Color'}</div>
                           <div className="text-xs text-gray-500">
                             Base: {fabric.base_fabrics?.name || 'N/A'}
                           </div>
@@ -669,9 +676,9 @@ export default function StockPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="text-lg font-semibold text-gray-900">
-                            {fabric.stock_quantity.toLocaleString()}m
+                            {fabric.totalStock.toLocaleString()}m
                           </div>
-                          {isLowStock(fabric.stock_quantity, fabric.minimum_stock) && (
+                          {isLowStock(fabric.totalStock, fabric.minimum_stock) && (
                             <ExclamationTriangleIcon className="ml-2 h-5 w-5 text-red-500" />
                           )}
                         </div>
@@ -682,22 +689,22 @@ export default function StockPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className={`w-3 h-3 rounded-full mr-2 ${
-                            fabric.stock_quantity > fabric.minimum_stock 
+                            fabric.totalStock > fabric.minimum_stock 
                               ? 'bg-green-400' 
-                              : fabric.stock_quantity > 0 
+                              : fabric.totalStock > 0 
                               ? 'bg-yellow-400' 
                               : 'bg-red-400'
                           }`}></div>
                           <span className={`text-sm font-medium ${
-                            fabric.stock_quantity > fabric.minimum_stock 
+                            fabric.totalStock > fabric.minimum_stock 
                               ? 'text-green-800' 
-                              : fabric.stock_quantity > 0 
+                              : fabric.totalStock > 0 
                               ? 'text-yellow-800' 
                               : 'text-red-800'
                           }`}>
-                            {fabric.stock_quantity > fabric.minimum_stock 
+                            {fabric.totalStock > fabric.minimum_stock 
                               ? 'In Stock' 
-                              : fabric.stock_quantity > 0 
+                              : fabric.totalStock > 0 
                               ? 'Low Stock' 
                               : 'Out of Stock'
                             }
@@ -708,7 +715,7 @@ export default function StockPage() {
                         <button 
                           onClick={() => setSelectedFabric(fabric)}
                           className="text-blue-600 hover:text-blue-900 mr-3"
-                          disabled={fabric.stock_quantity === 0}
+                          disabled={fabric.totalStock === 0}
                         >
                           View Details
                         </button>
