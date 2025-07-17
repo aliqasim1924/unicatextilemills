@@ -88,7 +88,7 @@ export const qrCodeUtils = {
       allocationStatus: rollData.allocationStatus || 'Available',
       
       // Download URL for PDF/text file generation
-      detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,
+      detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/${qrId}`,
       
       additionalData: {
         ...rollData.additionalData,

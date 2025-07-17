@@ -164,7 +164,7 @@ export const loomTrackingUtils = {
       
       // Download and reference
       qrId: qrId,
-      detailsUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,
+      detailsUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/${qrId}`,
       qrGeneratedAt: new Date().toISOString(),
       
       // Customer information
@@ -242,7 +242,7 @@ export const loomTrackingUtils = {
       
       // Download and reference
       qrId: qrId,
-      detailsUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,
+      detailsUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/${qrId}`,
       qrGeneratedAt: new Date().toISOString(),
       
       // Customer information
@@ -264,7 +264,7 @@ export const loomTrackingUtils = {
     return {
       type: 'api_roll',
       rollId: rollId,
-      apiUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/rolls/${rollId}`,
+      apiUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/rolls/${rollId}`,
       qrGeneratedAt: new Date().toISOString()
     }
   },

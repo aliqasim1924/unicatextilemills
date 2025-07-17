@@ -2,7 +2,7 @@
 export const config = {
   app: {
     name: process.env.NEXT_PUBLIC_APP_NAME || 'Unica Textiles Stock Management',
-    url: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+    url: process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app',
     description: 'Professional textile stock management system',
   },
   supabase: {
@@ -10,7 +10,7 @@ export const config = {
     anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   },
   qr: {
-    baseUrl: process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+    baseUrl: process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app',
   },
   pdf: {
     apiUrl: process.env.NEXT_PUBLIC_PDF_API_URL || '/api/pdf',
