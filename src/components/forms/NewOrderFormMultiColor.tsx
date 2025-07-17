@@ -57,7 +57,6 @@ interface OrderFormData {
 }
 
 interface AllocationPlan {
-  order_item_id: string
   stock_allocated: number
   production_required: number
   needs_coating_production: boolean
@@ -72,6 +71,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [productionMessages, setProductionMessages] = useState<string[]>([])
   
   const [formData, setFormData] = useState<OrderFormData>({
     customer_id: '',
@@ -106,6 +106,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         }]
       })
       setErrors({})
+      setProductionMessages([])
     }
   }, [isOpen])
 
@@ -245,6 +246,132 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
     return formData.order_items.reduce((total, item) => total + (item.quantity_ordered || 0), 0)
   }
 
+  const calculateAllocationPlan = (fabric: FinishedFabric, orderQuantity: number): AllocationPlan => {
+    const availableStock = fabric.stock_quantity
+    const stockAllocated = Math.min(orderQuantity, availableStock)
+    const productionRequired = Math.max(0, orderQuantity - availableStock)
+    
+    let baseFabricAvailable = 0
+    let needsWeavingProduction = false
+    let baseFabricShortage = 0
+    
+    if (productionRequired > 0 && fabric.base_fabrics) {
+      baseFabricAvailable = fabric.base_fabrics.stock_quantity
+      baseFabricShortage = Math.max(0, productionRequired - baseFabricAvailable)
+      needsWeavingProduction = baseFabricShortage > 0
+    } else if (productionRequired > 0) {
+      needsWeavingProduction = true // No base fabric linked
+      baseFabricShortage = productionRequired
+    }
+    
+    return {
+      stock_allocated: stockAllocated,
+      production_required: productionRequired,
+      needs_coating_production: productionRequired > 0,
+      needs_weaving_production: needsWeavingProduction,
+      base_fabric_available: baseFabricAvailable,
+      base_fabric_required: baseFabricShortage // Only the shortage amount
+    }
+  }
+
+  const createProductionOrders = async (orderId: string, orderItemId: string, fabric: FinishedFabric, allocationPlan: AllocationPlan, customerColor: string) => {
+    let weavingOrderId = null
+    const productionMessages: string[] = []
+
+    // Step 1: Create weaving production order if needed (only for base fabric shortage)
+    if (allocationPlan.needs_weaving_production) {
+      const weavingOrder = {
+        internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
+        production_type: 'weaving',
+        customer_order_id: orderId,
+        customer_order_item_id: orderItemId,
+        customer_color: customerColor,
+        base_fabric_id: fabric.base_fabric_id,
+        quantity_required: allocationPlan.base_fabric_required,
+        quantity_produced: 0,
+        production_status: 'pending',
+        priority_level: formData.priority_override,
+        target_completion_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        notes: `Weaving production for customer order - ${allocationPlan.base_fabric_required}m base fabric shortage - Color: ${customerColor}`,
+        production_sequence: 1
+      }
+
+      const { data: weavingResponse, error: weavingError } = await supabase
+        .from('production_orders')
+        .insert([weavingOrder])
+        .select('id')
+        .single()
+
+      if (weavingError) {
+        throw new Error(`Failed to create weaving production order: ${weavingError.message}`)
+      }
+
+      weavingOrderId = weavingResponse.id
+      productionMessages.push(`✓ Weaving production order created: ${weavingOrder.internal_order_number} (${allocationPlan.base_fabric_required}m)`)
+    }
+
+    // Step 2: Create coating production order if needed
+    if (allocationPlan.needs_coating_production) {
+      const coatingOrder = {
+        internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
+        production_type: 'coating',
+        customer_order_id: orderId,
+        customer_order_item_id: orderItemId,
+        customer_color: customerColor,
+        finished_fabric_id: fabric.id,
+        quantity_required: allocationPlan.production_required,
+        quantity_produced: 0,
+        production_status: allocationPlan.needs_weaving_production ? 'waiting_materials' : 'pending',
+        priority_level: formData.priority_override,
+        target_completion_date: new Date(Date.now() + (allocationPlan.needs_weaving_production ? 14 : 7) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        notes: `Coating production for customer order - ${allocationPlan.production_required}m finished fabric needed (${allocationPlan.base_fabric_available}m base fabric available) - Color: ${customerColor}`,
+        production_sequence: 2,
+        linked_production_order_id: weavingOrderId
+      }
+
+      const { error: coatingError } = await supabase
+        .from('production_orders')
+        .insert([coatingOrder])
+
+      if (coatingError) {
+        throw new Error(`Failed to create coating production order: ${coatingError.message}`)
+      }
+
+      productionMessages.push(`✓ Coating production order created: ${coatingOrder.internal_order_number} (${allocationPlan.production_required}m)`)
+    }
+
+    return { weavingOrderId, hasWeaving: allocationPlan.needs_weaving_production, hasCoating: allocationPlan.needs_coating_production, messages: productionMessages }
+  }
+
+  const updateStockQuantities = async (fabric: FinishedFabric, allocationPlan: AllocationPlan, orderId: string) => {
+    if (allocationPlan.stock_allocated > 0) {
+      // Update finished fabric stock
+      const { error } = await supabase
+        .from('finished_fabrics')
+        .update({ 
+          stock_quantity: fabric.stock_quantity - allocationPlan.stock_allocated 
+        })
+        .eq('id', fabric.id)
+
+      if (error) {
+        throw new Error(`Failed to update stock: ${error.message}`)
+      }
+
+      // Log stock movement
+      await supabase
+        .from('stock_movements')
+        .insert([{
+          fabric_type: 'finished_fabric',
+          fabric_id: fabric.id,
+          movement_type: 'allocation',
+          quantity: -allocationPlan.stock_allocated,
+          reference_id: orderId,
+          reference_type: 'customer_order',
+          notes: 'Stock allocated to customer order'
+        }])
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -281,23 +408,78 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         throw new Error(`Failed to create customer order: ${orderError.message}`)
       }
 
-      // Create customer order items
-      const orderItemsToInsert = formData.order_items.map(item => ({
-        customer_order_id: customerOrder.id,
-        finished_fabric_id: item.finished_fabric_id,
-        color: item.color,
-        quantity_ordered: item.quantity_ordered,
-        quantity_allocated: 0,
-        unit_price: item.unit_price,
-        notes: item.notes
-      }))
+      // Create customer order items and calculate allocations
+      const allProductionMessages: string[] = []
+      const orderItemsWithAllocations = []
+      let totalStockAllocated = 0
 
-      const { error: itemsError } = await supabase
+      for (const item of formData.order_items) {
+        const fabric = fabrics.find(f => f.id === item.finished_fabric_id)
+        if (!fabric) {
+          throw new Error(`Fabric not found for item: ${item.finished_fabric_id}`)
+        }
+
+        // Calculate allocation plan for this item
+        const allocationPlan = calculateAllocationPlan(fabric, item.quantity_ordered)
+        totalStockAllocated += allocationPlan.stock_allocated
+
+        orderItemsWithAllocations.push({
+          customer_order_id: customerOrder.id,
+          finished_fabric_id: item.finished_fabric_id,
+          color: item.color,
+          quantity_ordered: item.quantity_ordered,
+          quantity_allocated: allocationPlan.stock_allocated,
+          unit_price: item.unit_price,
+          notes: item.notes
+        })
+      }
+
+      // Insert order items
+      const { data: insertedItems, error: itemsError } = await supabase
         .from('customer_order_items')
-        .insert(orderItemsToInsert)
+        .insert(orderItemsWithAllocations)
+        .select()
 
       if (itemsError) {
         throw new Error(`Failed to create order items: ${itemsError.message}`)
+      }
+
+      // Update the main order with total allocated quantity
+      await supabase
+        .from('customer_orders')
+        .update({ quantity_allocated: totalStockAllocated })
+        .eq('id', customerOrder.id)
+
+      // Create production orders and update stock for each item
+      for (let i = 0; i < formData.order_items.length; i++) {
+        const item = formData.order_items[i]
+        const insertedItem = insertedItems[i]
+        const fabric = fabrics.find(f => f.id === item.finished_fabric_id)!
+        const allocationPlan = calculateAllocationPlan(fabric, item.quantity_ordered)
+
+        // Log initial allocation if stock was allocated
+        if (allocationPlan.stock_allocated > 0) {
+          await logBusinessEvent.customerOrder.stockAllocated(customerOrder.id, {
+            quantity: allocationPlan.stock_allocated,
+            remaining: allocationPlan.production_required,
+            allocationDate: new Date().toISOString()
+          })
+        }
+
+        // Create production orders if needed
+        if (allocationPlan.needs_coating_production || allocationPlan.needs_weaving_production) {
+          const productionResult = await createProductionOrders(
+            customerOrder.id,
+            insertedItem.id,
+            fabric,
+            allocationPlan,
+            item.color
+          )
+          allProductionMessages.push(...productionResult.messages)
+        }
+
+        // Update stock quantities
+        await updateStockQuantities(fabric, allocationPlan, customerOrder.id)
       }
 
       // Log business event
@@ -308,8 +490,19 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         quantity: calculateTotalQuantity()
       })
 
-      onOrderCreated()
-      onClose()
+      // Show production messages if any were created
+      if (allProductionMessages.length > 0) {
+        setProductionMessages(allProductionMessages)
+        // Clear messages after 10 seconds
+        setTimeout(() => {
+          setProductionMessages([])
+          onOrderCreated()
+          onClose()
+        }, 10000)
+      } else {
+        onOrderCreated()
+        onClose()
+      }
     } catch (error) {
       console.error('Error creating order:', error)
       setErrors({ submit: error instanceof Error ? error.message : 'Unknown error occurred' })
@@ -331,7 +524,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           <h3 className="text-lg font-medium text-gray-900">Create New Customer Order</h3>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-500"
+            className="text-gray-600 hover:text-gray-700"
           >
             <XMarkIcon className="h-6 w-6" />
           </button>
@@ -341,7 +534,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-2 text-gray-600">Loading form data...</span>
+              <span className="ml-2 text-gray-800">Loading form data...</span>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -575,7 +768,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                 {/* Order Summary */}
                 <div className="mt-6 bg-gray-100 p-4 rounded-lg">
                   <h5 className="text-md font-medium text-gray-800 mb-2">Order Summary</h5>
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-800">
                     <p>Total Items: {formData.order_items.length}</p>
                     <p>Total Quantity: {calculateTotalQuantity().toFixed(2)} meters</p>
                     <p>Colors: {formData.order_items.map(item => item.color).filter(Boolean).join(', ') || 'None selected'}</p>
@@ -608,6 +801,24 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
                 <div className="flex items-center p-4 text-sm text-red-700 bg-red-100 border border-red-200 rounded-md">
                   <ExclamationTriangleIcon className="h-5 w-5 mr-2" />
                   {errors.submit}
+                </div>
+              )}
+
+              {productionMessages.length > 0 && (
+                <div className="p-4 text-sm text-green-700 bg-green-100 border border-green-200 rounded-md">
+                  <div className="flex items-center mb-2">
+                    <CheckCircleIcon className="h-5 w-5 mr-2" />
+                    <span className="font-medium">Order Created Successfully!</span>
+                  </div>
+                  <div className="ml-7">
+                    <p className="mb-2">Production orders have been automatically created:</p>
+                    <ul className="space-y-1">
+                      {productionMessages.map((message, index) => (
+                        <li key={index} className="text-xs">{message}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs italic">This dialog will close automatically in 10 seconds...</p>
+                  </div>
                 </div>
               )}
             </form>
