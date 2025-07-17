@@ -1,8 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next'
-import React from 'react'
+import * as React from 'react'
 import { renderToBuffer } from '@react-pdf/renderer'
 import CustomerOrderTemplate from '@/components/pdf/templates/CustomerOrderTemplate'
 import { supabase } from '@/lib/supabase/client'
+
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -12,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const options = req.body?.options || {}
     
-    // Fetch all customer orders data with related information
+    // Fetch all customer orders data with related information including multi-color items
     const { data: orders, error } = await supabase
       .from('customer_orders')
       .select(`
@@ -30,6 +31,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           width_meters,
           color,
           coating_type
+        ),
+        customer_order_items (
+          id,
+          color,
+          quantity_ordered,
+          quantity_allocated,
+          unit_price,
+          notes,
+          finished_fabrics (
+            name,
+            gsm,
+            width_meters,
+            coating_type
+          )
         )
       `)
       .order('created_at', { ascending: false })
@@ -47,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       React.createElement(CustomerOrderTemplate, { 
         orders: orders,
         generatedAt: new Date().toISOString()
-      })
+      }) as any
     )
 
     // Generate filename with current date

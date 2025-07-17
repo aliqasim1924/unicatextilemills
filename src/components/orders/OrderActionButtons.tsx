@@ -317,76 +317,92 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
 
       // On order confirmation, create production orders
       if (pendingAction.action === 'confirm') {
-        // Fetch the full customer order details (including finished fabric)
+        // Fetch the full customer order details (including order items and finished fabric)
         const { data: orderDetails, error: orderDetailsError } = await supabase
           .from('customer_orders')
-          .select(`*, finished_fabrics(*, base_fabrics(*))`)
+          .select(`
+            *, 
+            finished_fabrics(*, base_fabrics(*)),
+            customer_order_items(*)
+          `)
           .eq('id', order.id)
           .single()
         if (orderDetailsError || !orderDetails) throw orderDetailsError || new Error('Order not found')
 
-        // Calculate allocation plan (same as in NewOrderForm)
-        const fabric = orderDetails.finished_fabrics
-        const availableStock = fabric?.stock_quantity || 0
-        const stockAllocated = Math.min(orderDetails.quantity_ordered, availableStock)
-        const productionRequired = Math.max(0, orderDetails.quantity_ordered - availableStock)
-        let baseFabricAvailable = fabric?.base_fabrics?.stock_quantity || 0
-        let needsWeavingProduction = false
-        let baseFabricShortage = 0
-        if (productionRequired > 0 && fabric?.base_fabrics) {
-          baseFabricShortage = Math.max(0, productionRequired - baseFabricAvailable)
-          needsWeavingProduction = baseFabricShortage > 0
-        } else if (productionRequired > 0) {
-          needsWeavingProduction = true
-          baseFabricShortage = productionRequired
+        // Create production orders for each order item
+        const orderItems = orderDetails.customer_order_items || []
+        if (orderItems.length === 0) {
+          throw new Error('No order items found for this order')
         }
 
-        // Create weaving production order if needed
-        let weavingOrderId = null
-        if (needsWeavingProduction) {
-          const weavingOrder = {
-            internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
-            production_type: 'weaving',
-            customer_order_id: order.id,
-            base_fabric_id: fabric?.base_fabric_id,
-            quantity_required: baseFabricShortage,
-            quantity_produced: 0,
-            production_status: 'pending',
-            priority_level: orderDetails.priority_override,
-            target_completion_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            notes: `Weaving production for customer order - ${baseFabricShortage}m base fabric shortage`,
-            production_sequence: 1
+        for (const orderItem of orderItems) {
+          // Calculate allocation plan for this specific item
+          const fabric = orderDetails.finished_fabrics
+          const availableStock = fabric?.stock_quantity || 0
+          const stockAllocated = Math.min(orderItem.quantity_ordered, availableStock)
+          const productionRequired = Math.max(0, orderItem.quantity_ordered - availableStock)
+          let baseFabricAvailable = fabric?.base_fabrics?.stock_quantity || 0
+          let needsWeavingProduction = false
+          let baseFabricShortage = 0
+          if (productionRequired > 0 && fabric?.base_fabrics) {
+            baseFabricShortage = Math.max(0, productionRequired - baseFabricAvailable)
+            needsWeavingProduction = baseFabricShortage > 0
+          } else if (productionRequired > 0) {
+            needsWeavingProduction = true
+            baseFabricShortage = productionRequired
           }
-          const { data: weavingResponse, error: weavingError } = await supabase
-            .from('production_orders')
-            .insert([weavingOrder])
-            .select('id')
-            .single()
-          if (weavingError) throw weavingError
-          weavingOrderId = weavingResponse.id
-        }
 
-        // Create coating production order if needed
-        if (productionRequired > 0) {
-          const coatingOrder = {
-            internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
-            production_type: 'coating',
-            customer_order_id: order.id,
-            finished_fabric_id: fabric?.id,
-            quantity_required: productionRequired,
-            quantity_produced: 0,
-            production_status: needsWeavingProduction ? 'waiting_materials' : 'pending',
-            priority_level: orderDetails.priority_override,
-            target_completion_date: new Date(Date.now() + (needsWeavingProduction ? 14 : 7) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            notes: `Coating production for customer order - ${productionRequired}m finished fabric needed (${baseFabricAvailable}m base fabric available)`,
-            production_sequence: needsWeavingProduction ? 2 : 1,
-            linked_production_order_id: weavingOrderId
+          // Create weaving production order if needed
+          let weavingOrderId = null
+          if (needsWeavingProduction) {
+            const weavingOrder = {
+              internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
+              production_type: 'weaving',
+              customer_order_id: order.id,
+              customer_order_item_id: orderItem.id,
+              customer_color: orderItem.color,
+              base_fabric_id: fabric?.base_fabric_id,
+              quantity_required: baseFabricShortage,
+              quantity_produced: 0,
+              production_status: 'pending',
+              priority_level: orderDetails.priority_override,
+              target_completion_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+              notes: `Weaving production for customer order - ${baseFabricShortage}m base fabric shortage - Color: ${orderItem.color}`,
+              production_sequence: 1
+            }
+            const { data: weavingResponse, error: weavingError } = await supabase
+              .from('production_orders')
+              .insert([weavingOrder])
+              .select('id')
+              .single()
+            if (weavingError) throw weavingError
+            weavingOrderId = weavingResponse.id
           }
-          const { error: coatingError } = await supabase
-            .from('production_orders')
-            .insert([coatingOrder])
-          if (coatingError) throw coatingError
-        }
+
+          // Create coating production order if needed
+          if (productionRequired > 0) {
+            const coatingOrder = {
+              internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
+              production_type: 'coating',
+              customer_order_id: order.id,
+              customer_order_item_id: orderItem.id,
+              customer_color: orderItem.color,
+              finished_fabric_id: fabric?.id,
+              quantity_required: productionRequired,
+              quantity_produced: 0,
+              production_status: needsWeavingProduction ? 'waiting_materials' : 'pending',
+              priority_level: orderDetails.priority_override,
+              target_completion_date: new Date(Date.now() + (needsWeavingProduction ? 14 : 7) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+              notes: `Coating production for customer order - ${productionRequired}m finished fabric needed (${baseFabricAvailable}m base fabric available) - Color: ${orderItem.color}`,
+              production_sequence: needsWeavingProduction ? 2 : 1,
+              linked_production_order_id: weavingOrderId
+            }
+            const { error: coatingError } = await supabase
+              .from('production_orders')
+              .insert([coatingOrder])
+            if (coatingError) throw coatingError
+          }
+        } // End of for loop
       }
 
       const updateData: any = {

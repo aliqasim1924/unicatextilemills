@@ -35,7 +35,7 @@ export default async function handler(
       })
     }
 
-    // Get production order details
+    // Get production order details with customer color information
     const { data: productionOrder, error: orderError } = await supabase
       .from('production_orders')
       .select(`
@@ -48,6 +48,11 @@ export default async function handler(
           customers (
             name
           )
+        ),
+        customer_order_items:customer_order_item_id (
+          id,
+          color,
+          quantity_ordered
         )
       `)
       .eq('id', productionOrderId)
@@ -73,7 +78,13 @@ export default async function handler(
 
     console.log('Generated batch number:', batchNumber)
 
-    // Create batch record
+    // Get customer color from the order item
+    const customerColor = productionOrder.customer_order_items?.color || productionOrder.customer_color || 'Natural'
+    const customerOrderItemId = productionOrder.customer_order_items?.id || productionOrder.customer_order_item_id
+
+    console.log('Customer color for production:', customerColor)
+
+    // Create batch record with customer color information
     const { data: batch, error: batchError } = await supabase
       .from('production_batches')
       .insert({
@@ -83,6 +94,10 @@ export default async function handler(
         planned_quantity: productionOrder.quantity_required,
         actual_a_grade_quantity: actualQuantity,
         batch_status: 'completed',
+        customer_color: customerColor,
+        customer_order_item_id: customerOrderItemId,
+        base_fabric_id: productionOrder.base_fabric_id,
+        finished_fabric_id: productionOrder.finished_fabric_id,
         created_at: now.toISOString(),
         completed_at: now.toISOString(),
         notes: qualityNotes
@@ -124,53 +139,54 @@ export default async function handler(
       const rollCount = Math.ceil(actualQuantity / rollLength)
       const rolls = []
 
-      // Create roll records with QR codes
+      // Create roll records with API-based QR codes
       for (let i = 1; i <= rollCount; i++) {
         const rollNumber = `${batchNumber}-R${i.toString().padStart(3, '0')}`
         const actualLength = i === rollCount ? actualQuantity % rollLength || rollLength : rollLength
         
-        // Generate QR code data with enhanced context
-        const qrData = qrCodeUtils.generateRollQRData({
-          rollNumber,
-          batchId: batch.id,
-          fabricType: fabricType as 'base_fabric' | 'finished_fabric',
-          fabricId: fabricId!,
-          rollLength: actualLength,
-          
-          // Enhanced context
-          productionPurpose: productionOrder.customer_order_id ? 'customer_order' : 'stock_building',
-          customerOrderId: productionOrder.customer_orders?.id,
-          customerOrderNumber: productionOrder.customer_orders?.internal_order_number,
-          customerName: productionOrder.customer_orders?.customers?.name,
-          productionOrderId: productionOrder.id,
-          productionOrderNumber: productionOrder.internal_order_number
-        })
-        
+        // Insert roll first to get the roll ID
+        const { data: rollData, error: rollError } = await supabase
+          .from('fabric_rolls')
+          .insert({
+            roll_number: rollNumber,
+            batch_id: batch.id,
+            fabric_type: fabricType,
+            fabric_id: fabricId,
+            roll_length: actualLength,
+            remaining_length: actualLength,
+            qr_code: '', // Temporary empty QR code
+            roll_status: 'available',
+            customer_color: customerColor,
+            customer_order_item_id: customerOrderItemId,
+            created_at: now.toISOString()
+          })
+          .select()
+          .single()
+
+        if (rollError) {
+          console.error('Failed to create roll:', rollError)
+          return res.status(500).json({ message: `Failed to create roll: ${rollError.message}` })
+        }
+
+        // Generate API-based QR code with the roll ID
+        const { loomTrackingUtils } = await import('@/lib/utils/loomTrackingUtils')
+        const qrData = loomTrackingUtils.generateApiQRData(rollData.id)
+
+        // Update the roll with the QR code
+        await supabase
+          .from('fabric_rolls')
+          .update({
+            qr_code: JSON.stringify(qrData)
+          })
+          .eq('id', rollData.id)
+
         rolls.push({
-          roll_number: rollNumber,
-          batch_id: batch.id,
-          fabric_type: fabricType,
-          fabric_id: fabricId,
-          roll_length: actualLength,
-          remaining_length: actualLength,
-          qr_code: JSON.stringify(qrData), // Store full QR data as JSON
-          roll_status: 'available',
-          created_at: now.toISOString()
+          ...rollData,
+          qr_code: JSON.stringify(qrData)
         })
       }
 
-      // Insert rolls into database
-      const { data: rollsData, error: rollsError } = await supabase
-        .from('fabric_rolls')
-        .insert(rolls)
-        .select()
-
-      if (rollsError) {
-        console.error('Failed to create rolls:', rollsError)
-        return res.status(500).json({ message: `Failed to create rolls: ${rollsError.message}` })
-      }
-
-      createdRolls = rollsData || []
+      createdRolls = rolls
       console.log('Fabric rolls created:', createdRolls.length)
     } else {
       console.log('Weaving production - no fabric rolls created, base fabric stored in bulk')

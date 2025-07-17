@@ -23,6 +23,20 @@ interface CustomerOrder {
     color: string | null
     coating_type: string | null
   }
+  customer_order_items?: Array<{
+    id: string
+    color: string
+    quantity_ordered: number
+    quantity_allocated: number
+    unit_price?: number
+    notes?: string
+    finished_fabrics?: {
+      name: string
+      gsm: number
+      width_meters: number
+      coating_type: string | null
+    }
+  }>
 }
 
 interface CustomerOrderTemplateProps {
@@ -385,16 +399,48 @@ export default function CustomerOrderTemplate({ orders, generatedAt }: CustomerO
                 )}
               </View>
               <View style={styles.col3}>
-                <Text style={styles.cellTextBold}>{order.finished_fabrics?.name || 'Unknown'}</Text>
-                {order.finished_fabrics?.color && (
-                  <Text style={styles.cellText}>{order.finished_fabrics.color}</Text>
+                {order.customer_order_items && order.customer_order_items.length > 0 ? (
+                  order.customer_order_items.map((item, index) => (
+                    <View key={item.id} style={{ marginBottom: index < order.customer_order_items!.length - 1 ? 4 : 0 }}>
+                      <Text style={styles.cellTextBold}>
+                        {item.finished_fabrics?.name || order.finished_fabrics?.name || 'Unknown'}
+                      </Text>
+                      <Text style={styles.cellText}>Color: {item.color}</Text>
+                      <Text style={styles.cellText}>{item.quantity_ordered}m</Text>
+                    </View>
+                  ))
+                ) : (
+                  <View>
+                    <Text style={styles.cellTextBold}>{order.finished_fabrics?.name || 'Unknown'}</Text>
+                    {order.finished_fabrics?.color && (
+                      <Text style={styles.cellText}>{order.finished_fabrics.color}</Text>
+                    )}
+                  </View>
                 )}
               </View>
               <View style={styles.col4}>
-                <Text style={styles.cellText}>{order.finished_fabrics?.gsm || 'N/A'}GSM</Text>
-                <Text style={styles.cellText}>{order.finished_fabrics?.width_meters || 'N/A'}m wide</Text>
-                {order.finished_fabrics?.coating_type && (
-                  <Text style={styles.cellText}>{order.finished_fabrics.coating_type}</Text>
+                {order.customer_order_items && order.customer_order_items.length > 0 ? (
+                  <View>
+                    <Text style={styles.cellText}>
+                      {order.customer_order_items[0].finished_fabrics?.gsm || order.finished_fabrics?.gsm || 'N/A'}GSM
+                    </Text>
+                    <Text style={styles.cellText}>
+                      {order.customer_order_items[0].finished_fabrics?.width_meters || order.finished_fabrics?.width_meters || 'N/A'}m wide
+                    </Text>
+                    {(order.customer_order_items[0].finished_fabrics?.coating_type || order.finished_fabrics?.coating_type) && (
+                      <Text style={styles.cellText}>
+                        {order.customer_order_items[0].finished_fabrics?.coating_type || order.finished_fabrics?.coating_type}
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  <View>
+                    <Text style={styles.cellText}>{order.finished_fabrics?.gsm || 'N/A'}GSM</Text>
+                    <Text style={styles.cellText}>{order.finished_fabrics?.width_meters || 'N/A'}m wide</Text>
+                    {order.finished_fabrics?.coating_type && (
+                      <Text style={styles.cellText}>{order.finished_fabrics.coating_type}</Text>
+                    )}
+                  </View>
                 )}
               </View>
               <View style={styles.col5}>

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { PlusIcon, MagnifyingGlassIcon, FunnelIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
-import NewOrderForm from '@/components/forms/NewOrderForm'
+import NewOrderFormMultiColor from '@/components/forms/NewOrderFormMultiColor'
 import OrderDetailsModal from '@/components/orders/OrderDetailsModal'
 import EditOrderModal from '@/components/orders/EditOrderModal'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
@@ -337,7 +337,7 @@ export default function OrdersPage() {
       </div>
 
       {/* New Order Form */}
-      <NewOrderForm
+              <NewOrderFormMultiColor
         isOpen={showNewOrderModal}
         onClose={() => setShowNewOrderModal(false)}
         onOrderCreated={loadOrders}

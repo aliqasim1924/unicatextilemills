@@ -66,6 +66,8 @@ export default function CoatingCompletionModal({
   const [pin, setPin] = useState('')
   const [showPinStep, setShowPinStep] = useState(false)
   const [pinError, setPinError] = useState('')
+  const [validationErrors, setValidationErrors] = useState<string[]>([])
+  const [isValidating, setIsValidating] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -153,6 +155,8 @@ export default function CoatingCompletionModal({
     setPin('')
     setShowPinStep(false)
     setPinError('')
+    setValidationErrors([])
+    setIsValidating(false)
   }
 
   // Note: addRoll and removeRoll functions removed as rolls are now pre-allocated
@@ -209,14 +213,31 @@ export default function CoatingCompletionModal({
     return (calculateBCGradeTotal() / totalInput) * 100
   }
 
-  const addAGradeShortRoll = () => {
-    const newRoll: IndividualRoll = {
-      id: `a-short-${Date.now()}`,
-      rollNumber: `A-SHORT-${aGradeShortRolls.length + 1}`,
-      rollLength: 0,
-      qualityNotes: ''
+  const addAGradeShortRoll = async () => {
+    // Generate proper batch-based roll number
+    try {
+      const { numberingUtils } = await import('@/lib/utils/numberingUtils')
+      const batchNumber = await numberingUtils.generateBatchNumber('coating')
+      const suggestedNumbers = await loomTrackingUtils.generateCoatingRollNumbers(batchNumber, 'AS', 1)
+      
+      const newRoll: IndividualRoll = {
+        id: `a-short-${Date.now()}`,
+        rollNumber: suggestedNumbers[0] || `${batchNumber}-AS-R${(aGradeShortRolls.length + 1).toString().padStart(3, '0')}`,
+        rollLength: 0,
+        qualityNotes: ''
+      }
+      setAGradeShortRolls([...aGradeShortRolls, newRoll])
+    } catch (error) {
+      console.error('Error generating roll number:', error)
+      // Fallback to simple numbering
+      const newRoll: IndividualRoll = {
+        id: `a-short-${Date.now()}`,
+        rollNumber: `AS-R${(aGradeShortRolls.length + 1).toString().padStart(3, '0')}`,
+        rollLength: 0,
+        qualityNotes: ''
+      }
+      setAGradeShortRolls([...aGradeShortRolls, newRoll])
     }
-    setAGradeShortRolls([...aGradeShortRolls, newRoll])
   }
 
   const removeAGradeShortRoll = (index: number) => {
@@ -229,14 +250,31 @@ export default function CoatingCompletionModal({
     setAGradeShortRolls(newRolls)
   }
 
-  const addBCGradeRoll = () => {
-    const newRoll: IndividualRoll = {
-      id: `bc-${Date.now()}`,
-      rollNumber: `BC-${bcGradeRolls.length + 1}`,
-      rollLength: 0,
-      qualityNotes: ''
+  const addBCGradeRoll = async () => {
+    // Generate proper batch-based roll number
+    try {
+      const { numberingUtils } = await import('@/lib/utils/numberingUtils')
+      const batchNumber = await numberingUtils.generateBatchNumber('coating')
+      const suggestedNumbers = await loomTrackingUtils.generateCoatingRollNumbers(batchNumber, 'BC', 1)
+      
+      const newRoll: IndividualRoll = {
+        id: `bc-${Date.now()}`,
+        rollNumber: suggestedNumbers[0] || `${batchNumber}-BC-R${(bcGradeRolls.length + 1).toString().padStart(3, '0')}`,
+        rollLength: 0,
+        qualityNotes: ''
+      }
+      setBcGradeRolls([...bcGradeRolls, newRoll])
+    } catch (error) {
+      console.error('Error generating roll number:', error)
+      // Fallback to simple numbering
+      const newRoll: IndividualRoll = {
+        id: `bc-${Date.now()}`,
+        rollNumber: `BC-R${(bcGradeRolls.length + 1).toString().padStart(3, '0')}`,
+        rollLength: 0,
+        qualityNotes: ''
+      }
+      setBcGradeRolls([...bcGradeRolls, newRoll])
     }
-    setBcGradeRolls([...bcGradeRolls, newRoll])
   }
 
   const removeBCGradeRoll = (index: number) => {
@@ -249,48 +287,67 @@ export default function CoatingCompletionModal({
     setBcGradeRolls(newRolls)
   }
 
-  const validateForm = () => {
+  const validateForm = async () => {
+    setIsValidating(true)
+    setValidationErrors([])
+
+    const errors: string[] = []
+
     if (selectedRolls.length === 0) {
-      alert('Please select at least one roll for processing.')
-      return false
+      errors.push('Please select at least one roll for processing.')
     }
 
     const totalInput = calculateTotalInput()
     const totalOutput = calculateTotalOutput()
 
     if (Math.abs(totalInput - totalOutput) > 0.1) {
-      alert(`Total input (${totalInput}m) must equal total output (${totalOutput}m).`)
-      return false
+      errors.push(`Total input (${totalInput}m) must equal total output (${totalOutput}m).`)
     }
 
     if (aGrade50mRolls < 0) {
-      alert('A grade 50m roll quantities cannot be negative.')
+      errors.push('A grade 50m roll quantities cannot be negative.')
+    }
+
+    // Use comprehensive validation from loomTrackingUtils
+    try {
+      const { numberingUtils } = await import('@/lib/utils/numberingUtils')
+      const batchNumber = await numberingUtils.generateBatchNumber('coating')
+      
+      const validationResult = await loomTrackingUtils.validateCoatingCompletion({
+        batchNumber,
+        totalInput,
+        aGrade50mRolls,
+        aGradeShortRolls: aGradeShortRolls.map(roll => ({
+          rollNumber: roll.rollNumber,
+          rollLength: roll.rollLength
+        })),
+        bcGradeRolls: bcGradeRolls.map(roll => ({
+          rollNumber: roll.rollNumber,
+          rollLength: roll.rollLength
+        }))
+      })
+
+      if (!validationResult.valid) {
+        errors.push(...validationResult.errors)
+      }
+
+      setValidationErrors(errors)
+      setIsValidating(false)
+      return errors.length === 0
+    } catch (error) {
+      console.error('Error during validation:', error)
+      errors.push('Failed to validate completion data. Please try again.')
+      setValidationErrors(errors)
+      setIsValidating(false)
       return false
     }
-
-    // Validate A grade short rolls
-    for (const roll of aGradeShortRolls) {
-      if (roll.rollLength <= 0) {
-        alert(`A grade short roll ${roll.rollNumber} must have a positive length.`)
-        return false
-      }
-    }
-
-    // Validate B/C grade rolls
-    for (const roll of bcGradeRolls) {
-      if (roll.rollLength <= 0) {
-        alert(`B/C grade roll ${roll.rollNumber} must have a positive length.`)
-        return false
-      }
-    }
-
-    return true
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!validateForm()) {
+    const isValid = await validateForm()
+    if (!isValid) {
       return
     }
 
@@ -698,6 +755,24 @@ export default function CoatingCompletionModal({
                   </p>
                 </div>
 
+                {/* Validation Errors */}
+                {validationErrors.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
+                    <h4 className="font-medium text-red-900 mb-2">Validation Errors</h4>
+                    <ul className="space-y-1">
+                      {validationErrors.map((error, index) => (
+                        <li key={index} className="text-sm text-red-800 flex items-start">
+                          <span className="text-red-600 mr-2">•</span>
+                          {error}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-xs text-red-700 mt-2">
+                      Please fix all validation errors before proceeding.
+                    </p>
+                  </div>
+                )}
+
                 {/* Completion Details */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -732,15 +807,17 @@ export default function CoatingCompletionModal({
                   <button
                     type="button"
                     onClick={handleClose}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                    disabled={isValidating}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+                    disabled={isValidating || validationErrors.length > 0}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
                   >
-                    Proceed to PIN Verification
+                    {isValidating ? 'Validating...' : 'Proceed to PIN Verification'}
                   </button>
                 </div>
               </form>

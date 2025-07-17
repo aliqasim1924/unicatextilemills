@@ -98,9 +98,13 @@ export const qrCodeUtils = {
   },
 
   // Generate QR code data string (for actual QR code generation)
-  generateQRString: (data: QRCodeData): string => {
-    // For file download, use the download URL directly
-    // This allows users to scan and automatically download PDF/text files
+  generateQRString: (data: any): string => {
+    // Handle API-based QR codes (new format)
+    if (data.type === 'api_roll' && data.apiUrl) {
+      return data.apiUrl
+    }
+    
+    // Handle legacy QR codes with download URLs
     if (data.detailsUrl) {
       return data.detailsUrl
     }

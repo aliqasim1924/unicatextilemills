@@ -250,7 +250,7 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
     return result
   }
 
-  const createProductionOrders = async (orderId: string, fabric: FinishedFabric, allocationPlan: AllocationPlan) => {
+  const createProductionOrders = async (orderId: string, orderItemId: string, fabric: FinishedFabric, allocationPlan: AllocationPlan, customerColor: string) => {
     let weavingOrderId = null
 
     // Step 1: Create weaving production order if needed (only for base fabric shortage)
@@ -259,13 +259,15 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
         internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
         production_type: 'weaving',
         customer_order_id: orderId,
+        customer_order_item_id: orderItemId,
+        customer_color: customerColor,
         base_fabric_id: fabric.base_fabric_id,
         quantity_required: allocationPlan.base_fabric_required, // Only the shortage amount
         quantity_produced: 0,
         production_status: 'pending',
         priority_level: formData.priority_override,
         target_completion_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 7 days from now
-        notes: `Weaving production for customer order - ${allocationPlan.base_fabric_required}m base fabric shortage`,
+        notes: `Weaving production for customer order - ${allocationPlan.base_fabric_required}m base fabric shortage - Color: ${customerColor}`,
         production_sequence: 1
       }
 
@@ -288,13 +290,15 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
         internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
         production_type: 'coating',
         customer_order_id: orderId,
+        customer_order_item_id: orderItemId,
+        customer_color: customerColor,
         finished_fabric_id: fabric.id,
         quantity_required: allocationPlan.production_required, // Full production required
         quantity_produced: 0,
         production_status: allocationPlan.needs_weaving_production ? 'waiting_materials' : 'pending',
         priority_level: formData.priority_override,
         target_completion_date: new Date(Date.now() + (allocationPlan.needs_weaving_production ? 14 : 7) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        notes: `Coating production for customer order - ${allocationPlan.production_required}m finished fabric needed (${allocationPlan.base_fabric_available}m base fabric available)`,
+        notes: `Coating production for customer order - ${allocationPlan.production_required}m finished fabric needed (${allocationPlan.base_fabric_available}m base fabric available) - Color: ${customerColor}`,
         production_sequence: 2,
         linked_production_order_id: weavingOrderId // Link to weaving order if exists
       }

@@ -261,11 +261,106 @@ export const loomTrackingUtils = {
     apiUrl: string
     qrGeneratedAt: string
   } => {
+    // For mobile scanning, use the roll details page URL
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'
     return {
       type: 'api_roll',
       rollId: rollId,
-      apiUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/rolls/${rollId}`,
+      apiUrl: `${baseUrl}/roll/${rollId}`,
       qrGeneratedAt: new Date().toISOString()
+    }
+  },
+
+  // Generate suggested roll numbers for coating completion with conflict checking
+  generateCoatingRollNumbers: async (batchNumber: string, rollType: 'A50' | 'AS' | 'BC', count: number): Promise<string[]> => {
+    const rollNumbers: string[] = []
+    
+    // Get existing roll numbers for this batch to avoid conflicts
+    const { data: existingRolls } = await supabase
+      .from('fabric_rolls')
+      .select('roll_number')
+      .like('roll_number', `${batchNumber}%`)
+    
+    const existingNumbers = new Set(existingRolls?.map(r => r.roll_number) || [])
+    
+    let counter = 1
+    for (let i = 0; i < count; i++) {
+      let rollNumber: string
+      do {
+        rollNumber = `${batchNumber}-${rollType}-R${counter.toString().padStart(3, '0')}`
+        counter++
+      } while (existingNumbers.has(rollNumber))
+      
+      rollNumbers.push(rollNumber)
+      existingNumbers.add(rollNumber) // Add to set to avoid duplicate suggestions
+    }
+    
+    return rollNumbers
+  },
+
+  // Validate coating completion data for conflicts and completeness
+  validateCoatingCompletion: async (completionData: {
+    batchNumber: string
+    totalInput: number
+    aGrade50mRolls: number
+    aGradeShortRolls: Array<{ rollNumber: string; rollLength: number }>
+    bcGradeRolls: Array<{ rollNumber: string; rollLength: number }>
+  }): Promise<{ valid: boolean; errors: string[] }> => {
+    const errors: string[] = []
+    
+    // Check for roll number conflicts
+    const allRollNumbers = [
+      ...completionData.aGradeShortRolls.map(r => r.rollNumber),
+      ...completionData.bcGradeRolls.map(r => r.rollNumber)
+    ]
+    
+    // Check for duplicates within the submission
+    const uniqueRollNumbers = new Set(allRollNumbers)
+    if (uniqueRollNumbers.size !== allRollNumbers.length) {
+      errors.push('Duplicate roll numbers found in your submission')
+    }
+    
+    // Check for conflicts with existing rolls in database
+    if (allRollNumbers.length > 0) {
+      const { data: existingRolls } = await supabase
+        .from('fabric_rolls')
+        .select('roll_number')
+        .in('roll_number', allRollNumbers)
+      
+      if (existingRolls && existingRolls.length > 0) {
+        const conflictingNumbers = existingRolls.map(r => r.roll_number)
+        errors.push(`Roll numbers already exist in database: ${conflictingNumbers.join(', ')}`)
+      }
+    }
+    
+    // Check fabric accountability (total input = total output)
+    const aGradeShortTotal = completionData.aGradeShortRolls.reduce((sum, roll) => sum + roll.rollLength, 0)
+    const bcGradeTotal = completionData.bcGradeRolls.reduce((sum, roll) => sum + roll.rollLength, 0)
+    const totalOutput = (completionData.aGrade50mRolls * 50) + aGradeShortTotal + bcGradeTotal
+    
+    const tolerance = 0.1 // Allow small rounding differences
+    if (Math.abs(completionData.totalInput - totalOutput) > tolerance) {
+      errors.push(`Total input (${completionData.totalInput}m) must equal total output (${totalOutput}m). Difference: ${Math.abs(completionData.totalInput - totalOutput).toFixed(2)}m`)
+    }
+    
+    // Check for empty roll numbers
+    const emptyRollNumbers = allRollNumbers.filter(num => !num || num.trim() === '')
+    if (emptyRollNumbers.length > 0) {
+      errors.push('All rolls must have valid roll numbers')
+    }
+    
+    // Check for negative or zero lengths
+    const invalidLengths = [
+      ...completionData.aGradeShortRolls.filter(r => r.rollLength <= 0),
+      ...completionData.bcGradeRolls.filter(r => r.rollLength <= 0)
+    ]
+    if (invalidLengths.length > 0) {
+      errors.push('All roll lengths must be positive numbers')
+    }
+    
+    return {
+      valid: errors.length === 0,
+      errors
     }
   },
 
@@ -925,20 +1020,7 @@ export const loomTrackingUtils = {
       //   customerName = completionData.customerName
       // }
 
-      const qrData = loomTrackingUtils.generateFinalRollQRData({
-        rollNumber,
-        batchNumber,
-        rollLength: 50,
-        qualityGrade: 'A',
-        rollType: 'full_50m',
-        fabricId: fabricId,
-        productionChain,
-        customerOrderId,
-        customerOrderNumber,
-        customerName,
-        productionPurpose: customerOrderId ? 'customer_order' : 'stock_building'
-      })
-
+      // Insert roll first to get the roll ID
       const { data: finalRoll, error: rollError } = await supabase
         .from('fabric_rolls')
         .insert({
@@ -950,7 +1032,7 @@ export const loomTrackingUtils = {
           remaining_length: 50,
           quality_grade: 'A',
           roll_type: 'full_50m',
-          qr_code: JSON.stringify(qrData)
+          qr_code: '' // Temporary empty QR code
         })
         .select()
         .single()
@@ -958,6 +1040,17 @@ export const loomTrackingUtils = {
       if (rollError) {
         throw new Error(`Failed to create final roll: ${rollError.message}`)
       }
+
+      // Generate API-based QR code with the roll ID
+      const qrData = loomTrackingUtils.generateApiQRData(finalRoll.id)
+
+      // Update the roll with the QR code
+      await supabase
+        .from('fabric_rolls')
+        .update({
+          qr_code: JSON.stringify(qrData)
+        })
+        .eq('id', finalRoll.id)
 
       finalRolls.push({
         id: finalRoll.id,
@@ -996,20 +1089,7 @@ export const loomTrackingUtils = {
           batchNumber: batchNumber
         })
 
-        const qrData = loomTrackingUtils.generateFinalRollQRData({
-          rollNumber,
-          batchNumber,
-          rollLength: rollDetail.rollLength,
-          qualityGrade: 'A',
-          rollType: 'short',
-          fabricId: fabricId,
-          productionChain,
-          customerOrderId,
-          customerOrderNumber,
-          customerName,
-          productionPurpose: customerOrderId ? 'customer_order' : 'stock_building'
-        })
-
+        // Insert roll first to get the roll ID
         const { data: finalRoll, error: rollError } = await supabase
           .from('fabric_rolls')
           .insert({
@@ -1021,7 +1101,7 @@ export const loomTrackingUtils = {
             remaining_length: rollDetail.rollLength,
             quality_grade: 'A',
             roll_type: 'short',
-            qr_code: JSON.stringify(qrData)
+            qr_code: '' // Temporary empty QR code
           })
           .select()
           .single()
@@ -1029,6 +1109,17 @@ export const loomTrackingUtils = {
         if (rollError) {
           throw new Error(`Failed to create A grade short roll: ${rollError.message}`)
         }
+
+        // Generate API-based QR code with the roll ID
+        const qrData = loomTrackingUtils.generateApiQRData(finalRoll.id)
+
+        // Update the roll with the QR code
+        await supabase
+          .from('fabric_rolls')
+          .update({
+            qr_code: JSON.stringify(qrData)
+          })
+          .eq('id', finalRoll.id)
 
         finalRolls.push({
           id: finalRoll.id,
@@ -1068,20 +1159,7 @@ export const loomTrackingUtils = {
           batchNumber: batchNumber
         })
 
-        const qrData = loomTrackingUtils.generateFinalRollQRData({
-          rollNumber,
-          batchNumber,
-          rollLength: rollDetail.rollLength,
-          qualityGrade: 'B',
-          rollType: rollDetail.rollLength >= 50 ? 'full_50m' : 'short',
-          fabricId: fabricId,
-          productionChain,
-          customerOrderId,
-          customerOrderNumber,
-          customerName,
-          productionPurpose: customerOrderId ? 'customer_order' : 'stock_building'
-        })
-
+        // Insert roll first to get the roll ID
         const { data: finalRoll, error: rollError } = await supabase
           .from('fabric_rolls')
           .insert({
@@ -1093,7 +1171,7 @@ export const loomTrackingUtils = {
             remaining_length: rollDetail.rollLength,
             quality_grade: 'B',
             roll_type: rollDetail.rollLength >= 50 ? 'full_50m' : 'short',
-            qr_code: JSON.stringify(qrData)
+            qr_code: '' // Temporary empty QR code
           })
           .select()
           .single()
@@ -1101,6 +1179,17 @@ export const loomTrackingUtils = {
         if (rollError) {
           throw new Error(`Failed to create B/C grade roll: ${rollError.message}`)
         }
+
+        // Generate API-based QR code with the roll ID
+        const qrData = loomTrackingUtils.generateApiQRData(finalRoll.id)
+
+        // Update the roll with the QR code
+        await supabase
+          .from('fabric_rolls')
+          .update({
+            qr_code: JSON.stringify(qrData)
+          })
+          .eq('id', finalRoll.id)
 
         finalRolls.push({
           id: finalRoll.id,

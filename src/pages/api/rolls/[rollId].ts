@@ -21,14 +21,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         production_batches (
           batch_number,
           production_type,
+          customer_color,
           production_orders (
             internal_order_number,
             customer_order_id,
+            customer_color,
             customer_orders (
               internal_order_number,
               customers (
                 name
               )
+            )
+          )
+        ),
+        customer_order_items:customer_order_item_id (
+          id,
+          color,
+          quantity_ordered,
+          customer_order_id,
+          customer_orders (
+            internal_order_number,
+            customers (
+              name
             )
           )
         )
@@ -39,7 +53,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (fabricRoll && !fabricRollError) {
       // Get fabric name and color based on type
       let fabricName = 'Unknown Fabric'
-      let fabricColor = 'Natural'
+      let fabricColor = fabricRoll.customer_color || 
+                       fabricRoll.customer_order_items?.color || 
+                       fabricRoll.production_batches?.customer_color ||
+                       'Natural'
+      
       if (fabricRoll.fabric_type === 'base_fabric') {
         const { data: fabricData } = await supabase
           .from('base_fabrics')
@@ -54,7 +72,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           .eq('id', fabricRoll.fabric_id)
           .single()
         fabricName = fabricData?.name || 'Unknown Finished Fabric'
-        fabricColor = fabricData?.color || 'Natural'
+        // Keep the customer color we already determined, don't override it
+        if (!fabricColor || fabricColor === 'Natural') {
+          fabricColor = fabricData?.color || 'Natural'
+        }
       }
 
       // Determine allocation status
