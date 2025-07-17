@@ -389,8 +389,11 @@ export default function StockPage() {
   const isLowStock = (current: number, minimum: number) => current <= minimum
 
   const filteredFinishedFabrics = finishedFabrics.filter(fabric =>
-    fabric.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    fabric.color?.toLowerCase().includes(searchTerm.toLowerCase())
+    // Only show finished fabrics that have actual stock (have been produced)
+    fabric.stock_quantity > 0 && (
+      fabric.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      fabric.color?.toLowerCase().includes(searchTerm.toLowerCase())
+    )
   )
 
   const filteredBaseFabrics = baseFabrics.filter(fabric =>
@@ -650,7 +653,7 @@ export default function StockPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
                           <div className="text-sm font-medium text-gray-900">{fabric.name}</div>
-                          <div className="text-sm text-gray-700">{fabric.color || 'Natural'}</div>
+                          <div className="text-sm text-gray-700">{fabric.color || 'Unknown Color'}</div>
                           <div className="text-xs text-gray-500">
                             Base: {fabric.base_fabrics?.name || 'N/A'}
                           </div>
