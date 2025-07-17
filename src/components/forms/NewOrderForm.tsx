@@ -5,6 +5,7 @@ import { XMarkIcon, ExclamationTriangleIcon, CheckCircleIcon } from '@heroicons/
 import { supabase } from '@/lib/supabase/client'
 import { logBusinessEvent, generateOrderAuditDescription } from '@/lib/utils/auditTrail'
 import { numberingUtils } from '@/lib/utils/numberingUtils'
+import ColorDropdown from '@/components/ui/ColorDropdown'
 
 interface Customer {
   id: string
@@ -407,9 +408,6 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
       // Update stock quantities
       await updateStockQuantities(selectedFabric, allocationPlan)
 
-      // Create production orders if needed
-      await createProductionOrders(orderId, selectedFabric, allocationPlan)
-
       // Success! Close modal and refresh orders
       onOrderCreated()
       onClose()
@@ -586,28 +584,16 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
 
             {/* Color Specification */}
             <div>
-              <label htmlFor="color" className="block text-sm font-medium text-gray-700 mb-2">
-                Color *
-              </label>
-              <input
-                type="text"
+              <ColorDropdown
                 id="color"
                 value={formData.color}
-                onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                className={`block w-full px-3 py-2 border rounded-md shadow-sm text-gray-900 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 ${
-                  errors.color ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="e.g., Navy Blue, Forest Green, Black, etc."
+                onChange={(value) => setFormData({ ...formData, color: value })}
+                label="Color"
+                placeholder="Select a color"
+                error={errors.color}
+                required={true}
+                helperText="Specify the exact color required for this order. The coating production will use this color specification."
               />
-              {errors.color && (
-                <p className="mt-1 text-sm text-red-600 flex items-center">
-                  <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
-                  {errors.color}
-                </p>
-              )}
-              <p className="mt-1 text-sm text-gray-700">
-                Specify the exact color required for this order. The coating production will use this color specification.
-              </p>
             </div>
 
             {/* Quantity and Customer PO */}

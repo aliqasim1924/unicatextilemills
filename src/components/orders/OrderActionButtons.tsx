@@ -6,7 +6,9 @@ import {
   XMarkIcon, 
   TruckIcon, 
   ClipboardDocumentIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ClockIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import { generateOrderAuditDescription, logBusinessEvent } from '@/lib/utils/auditTrail'
@@ -67,18 +69,20 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
         break
         
       case 'confirmed':
+        // Show awaiting production status instead of start production button
         actions.push({
-          action: 'start_production',
-          label: 'Start Production',
-          newStatus: 'in_production',
-          icon: CheckIcon,
-          color: 'bg-blue-600 hover:bg-blue-700',
-          description: 'Mark as in production'
+          action: 'awaiting_production',
+          label: 'Awaiting Production',
+          newStatus: 'confirmed', // No status change
+          icon: ClockIcon,
+          color: 'bg-amber-600 hover:bg-amber-700',
+          description: 'Order confirmed and awaiting production to commence',
+          disabled: true // Make it non-clickable
         })
         break
         
       case 'in_production':
-        // Only show if production is actually complete
+        // Show production in progress status
         if (order.quantity_allocated >= order.quantity_ordered) {
           actions.push({
             action: 'complete_production',
@@ -87,6 +91,16 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
             icon: CheckIcon,
             color: 'bg-green-600 hover:bg-green-700',
             description: 'Mark production as complete'
+          })
+        } else {
+          actions.push({
+            action: 'in_progress',
+            label: 'Production In Progress',
+            newStatus: 'in_production', // No status change
+            icon: Cog6ToothIcon,
+            color: 'bg-blue-600 hover:bg-blue-700',
+            description: 'Production is currently in progress',
+            disabled: true // Make it non-clickable
           })
         }
         break
@@ -300,7 +314,81 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
 
     try {
       setUpdating(true)
-      
+
+      // On order confirmation, create production orders
+      if (pendingAction.action === 'confirm') {
+        // Fetch the full customer order details (including finished fabric)
+        const { data: orderDetails, error: orderDetailsError } = await supabase
+          .from('customer_orders')
+          .select(`*, finished_fabrics(*, base_fabrics(*))`)
+          .eq('id', order.id)
+          .single()
+        if (orderDetailsError || !orderDetails) throw orderDetailsError || new Error('Order not found')
+
+        // Calculate allocation plan (same as in NewOrderForm)
+        const fabric = orderDetails.finished_fabrics
+        const availableStock = fabric?.stock_quantity || 0
+        const stockAllocated = Math.min(orderDetails.quantity_ordered, availableStock)
+        const productionRequired = Math.max(0, orderDetails.quantity_ordered - availableStock)
+        let baseFabricAvailable = fabric?.base_fabrics?.stock_quantity || 0
+        let needsWeavingProduction = false
+        let baseFabricShortage = 0
+        if (productionRequired > 0 && fabric?.base_fabrics) {
+          baseFabricShortage = Math.max(0, productionRequired - baseFabricAvailable)
+          needsWeavingProduction = baseFabricShortage > 0
+        } else if (productionRequired > 0) {
+          needsWeavingProduction = true
+          baseFabricShortage = productionRequired
+        }
+
+        // Create weaving production order if needed
+        let weavingOrderId = null
+        if (needsWeavingProduction) {
+          const weavingOrder = {
+            internal_order_number: await numberingUtils.generateProductionOrderNumber('weaving'),
+            production_type: 'weaving',
+            customer_order_id: order.id,
+            base_fabric_id: fabric?.base_fabric_id,
+            quantity_required: baseFabricShortage,
+            quantity_produced: 0,
+            production_status: 'pending',
+            priority_level: orderDetails.priority_override,
+            target_completion_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            notes: `Weaving production for customer order - ${baseFabricShortage}m base fabric shortage`,
+            production_sequence: 1
+          }
+          const { data: weavingResponse, error: weavingError } = await supabase
+            .from('production_orders')
+            .insert([weavingOrder])
+            .select('id')
+            .single()
+          if (weavingError) throw weavingError
+          weavingOrderId = weavingResponse.id
+        }
+
+        // Create coating production order if needed
+        if (productionRequired > 0) {
+          const coatingOrder = {
+            internal_order_number: await numberingUtils.generateProductionOrderNumber('coating'),
+            production_type: 'coating',
+            customer_order_id: order.id,
+            finished_fabric_id: fabric?.id,
+            quantity_required: productionRequired,
+            quantity_produced: 0,
+            production_status: needsWeavingProduction ? 'waiting_materials' : 'pending',
+            priority_level: orderDetails.priority_override,
+            target_completion_date: new Date(Date.now() + (needsWeavingProduction ? 14 : 7) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            notes: `Coating production for customer order - ${productionRequired}m finished fabric needed (${baseFabricAvailable}m base fabric available)`,
+            production_sequence: needsWeavingProduction ? 2 : 1,
+            linked_production_order_id: weavingOrderId
+          }
+          const { error: coatingError } = await supabase
+            .from('production_orders')
+            .insert([coatingOrder])
+          if (coatingError) throw coatingError
+        }
+      }
+
       const updateData: any = {
         order_status: pendingAction.newStatus,
         updated_at: new Date().toISOString()
@@ -324,7 +412,13 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
 
       // Create shipment if this is a dispatch action
       if (pendingAction.action === 'dispatch') {
-        await createShipmentForOrder(order.id, dispatchData)
+        try {
+          await createShipmentForOrder(order.id, dispatchData)
+        } catch (shipmentError) {
+          console.error('Error creating shipment:', shipmentError)
+          // Continue with order update even if shipment creation fails
+          // The order will still be marked as dispatched
+        }
       }
 
       // Log comprehensive audit trail entries
@@ -359,7 +453,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
 
       if (shipmentError) {
         console.error('Error creating shipment:', shipmentError)
-        throw shipmentError
+        throw new Error(`Failed to create shipment: ${shipmentError.message}`)
       }
 
       // Get rolls that belong to this order's fabric type and are ready to be shipped
@@ -377,7 +471,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
       // Get available rolls for this fabric type that can be shipped
       const { data: availableRolls, error: rollsError } = await supabase
         .from('fabric_rolls')
-        .select('id, roll_number, roll_length, remaining_length')
+        .select('id, roll_number, length, remaining_length')
         .eq('fabric_type', 'finished_fabric')
         .eq('fabric_id', orderDetails.finished_fabric_id)
         .eq('roll_status', 'available')
@@ -396,7 +490,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
       for (const roll of availableRolls || []) {
         if (remainingToShip <= 0) break
         
-        const quantityToShip = Math.min(remainingToShip, roll.remaining_length)
+        const quantityToShip = Math.min(remainingToShip, roll.remaining_length || roll.length)
         if (quantityToShip > 0) {
           shipmentItems.push({
             shipment_id: shipment.id,
@@ -424,7 +518,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
       console.log('Shipment created successfully:', shipment.shipment_number)
     } catch (error) {
       console.error('Error creating shipment:', error)
-      // Don't throw here - order dispatch should still succeed even if shipment creation fails
+      throw error // Re-throw to be caught by the calling function
     }
   }
 
@@ -460,8 +554,8 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
         return (
           <button
             key={actionConfig.action}
-            onClick={() => handleActionClick(actionConfig)}
-            disabled={updating}
+            onClick={() => !actionConfig.disabled && handleActionClick(actionConfig)}
+            disabled={updating || actionConfig.disabled}
             className={`
               w-full flex items-center justify-center px-3 py-2 text-xs font-medium text-white rounded-md 
               transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed

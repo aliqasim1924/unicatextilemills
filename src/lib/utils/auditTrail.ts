@@ -251,6 +251,139 @@ export const logBusinessEvent = {
   }
 }
 
+// Enhanced audit logging for loom tracking and production grading
+export const loomTrackingEvents = {
+  // Weaving completion with loom details
+  weavingCompletedWithLooms: async (productionOrderId: string, data: {
+    batchNumber: string
+    totalLooms: number
+    totalRolls: number
+    totalQuantity: number
+    loomDetails: Array<{
+      loomNumber: string
+      quantity: number
+      rolls: number
+      efficiency: number
+    }>
+    completionRate: number
+  }) => {
+    const description = `Weaving production completed with ${data.totalLooms} looms producing ${data.totalRolls} rolls (${data.totalQuantity}m total, ${data.completionRate}% completion rate)`
+    
+    await logProductionOrderAudit(productionOrderId, {
+      action_type: 'weaving_completed_with_looms',
+      change_description: description,
+      changed_by: 'User',
+      change_reason: 'Weaving production completed with detailed loom tracking'
+    })
+  },
+
+  // Loom roll creation
+  loomRollCreated: async (productionOrderId: string, data: {
+    rollNumber: string
+    loomNumber: string
+    rollLength: number
+    qualityGrade: string
+    batchNumber: string
+  }) => {
+    const description = `Loom roll ${data.rollNumber} created on ${data.loomNumber} (${data.rollLength}m, Grade ${data.qualityGrade})`
+    
+    await logProductionOrderAudit(productionOrderId, {
+      action_type: 'loom_roll_created',
+      change_description: description,
+      changed_by: 'System',
+      change_reason: 'Individual loom roll created during weaving production'
+    })
+  },
+
+  // Coating completion with grading
+  coatingCompletedWithGrading: async (productionOrderId: string, data: {
+    batchNumber: string
+    inputRolls: number
+    totalInput: number
+    aGrade50mRolls: number
+    aGradeShortRolls: number
+    aGradeShortQuantity: number
+    bcGradeRolls: number
+    bcGradeQuantity: number
+    wastageQuantity: number
+    wastagePercentage: number
+    efficiency: number
+  }) => {
+    const description = `Coating production completed: ${data.aGrade50mRolls} A-grade 50m rolls, ${data.aGradeShortRolls} A-grade short rolls, ${data.bcGradeRolls} B/C-grade rolls, ${data.wastageQuantity}m wastage (${data.wastagePercentage}%)`
+    
+    await logProductionOrderAudit(productionOrderId, {
+      action_type: 'coating_completed_with_grading',
+      change_description: description,
+      changed_by: 'User',
+      change_reason: 'Coating production completed with detailed quality grading'
+    })
+  },
+
+  // Roll selection for coating
+  rollSelectedForCoating: async (productionOrderId: string, data: {
+    rollNumber: string
+    loomNumber: string
+    quantityUsed: number
+    processingOrder: number
+    batchNumber: string
+  }) => {
+    const description = `Roll ${data.rollNumber} from ${data.loomNumber} selected for coating (${data.quantityUsed}m, processing order ${data.processingOrder})`
+    
+    await logProductionOrderAudit(productionOrderId, {
+      action_type: 'roll_selected_for_coating',
+      change_description: description,
+      changed_by: 'User',
+      change_reason: 'Loom roll selected for coating production process'
+    })
+  },
+
+  // Final roll creation with traceability
+  finalRollCreated: async (productionOrderId: string, data: {
+    rollNumber: string
+    rollType: string
+    qualityGrade: string
+    rollLength: number
+    sourceLoomNumber?: string
+    sourceLoomRollNumber?: string
+    batchNumber: string
+    traceabilityData: {
+      weavingStartDate?: string
+      weavingEndDate?: string
+      coatingStartDate?: string
+      coatingEndDate?: string
+    }
+  }) => {
+    const traceInfo = data.sourceLoomNumber ? ` (traced from ${data.sourceLoomNumber})` : ''
+    const description = `Final roll ${data.rollNumber} created: ${data.rollType} ${data.qualityGrade}-grade (${data.rollLength}m)${traceInfo}`
+    
+    await logProductionOrderAudit(productionOrderId, {
+      action_type: 'final_roll_created',
+      change_description: description,
+      changed_by: 'System',
+      change_reason: 'Final fabric roll created with complete traceability'
+    })
+  }
+}
+
+// Add helper function to calculate production metrics
+export const calculateProductionMetrics = {
+  efficiency: (actual: number, planned: number): number => {
+    return planned > 0 ? (actual / planned) * 100 : 0
+  },
+  
+  wastagePercentage: (wastage: number, total: number): number => {
+    return total > 0 ? (wastage / total) * 100 : 0
+  },
+  
+  gradePercentage: (gradeQuantity: number, total: number): number => {
+    return total > 0 ? (gradeQuantity / total) * 100 : 0
+  },
+  
+  rollsPerMeter: (totalRolls: number, totalMeters: number): number => {
+    return totalMeters > 0 ? totalRolls / totalMeters : 0
+  }
+}
+
 // Legacy function for simple descriptions - kept for backward compatibility
 export const generateOrderAuditDescription = (
   action: string,

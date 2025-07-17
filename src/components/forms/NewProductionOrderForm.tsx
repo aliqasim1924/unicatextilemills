@@ -5,6 +5,7 @@ import { XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import { logBusinessEvent } from '@/lib/utils/auditTrail'
 import { numberingUtils } from '@/lib/utils/numberingUtils'
+import { getColorOptions } from '@/lib/constants/colors'
 
 interface NewProductionOrderFormProps {
   isOpen: boolean
@@ -498,18 +499,11 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
                   }`}
                 >
                   <option value="">Select coating color</option>
-                  <option value="Black">Black</option>
-                  <option value="Navy Blue">Navy Blue</option>
-                  <option value="Olive Green">Olive Green</option>
-                  <option value="Forest Green">Forest Green</option>
-                  <option value="Brown">Brown</option>
-                  <option value="Grey">Grey</option>
-                  <option value="White">White</option>
-                  <option value="Red">Red</option>
-                  <option value="Yellow">Yellow</option>
-                  <option value="Orange">Orange</option>
-                  <option value="Blue">Blue</option>
-                  <option value="Custom">Custom Color</option>
+                  {getColorOptions().map((color) => (
+                    <option key={color.value} value={color.value}>
+                      {color.label}
+                    </option>
+                  ))}
                 </select>
                 {errors.coating_color && (
                   <p className="mt-1 text-sm text-red-600 flex items-center">

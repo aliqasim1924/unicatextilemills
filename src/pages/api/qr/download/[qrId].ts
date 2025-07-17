@@ -88,8 +88,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ message: 'QR code not found' })
     }
 
-    // Get fabric name based on type
+    // Get fabric name and color based on type
     let fabricName = 'Unknown Fabric'
+    let fabricColor = 'Natural'
     if (targetRoll.fabric_type === 'base_fabric') {
       const { data: fabricData } = await supabase
         .from('base_fabrics')
@@ -100,10 +101,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } else if (targetRoll.fabric_type === 'finished_fabric') {
       const { data: fabricData } = await supabase
         .from('finished_fabrics')
-        .select('name')
+        .select('name, color')
         .eq('id', targetRoll.fabric_id)
         .single()
       fabricName = fabricData?.name || 'Unknown Finished Fabric'
+      fabricColor = fabricData?.color || 'Natural'
     }
 
     // Parse QR data for additional context
@@ -114,11 +116,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       qrData = {}
     }
 
+    // Determine allocation status
+    let allocationStatus = 'Available'
+    if (targetRoll.roll_status === 'allocated') {
+      if (targetRoll.production_batches?.production_orders?.customer_orders?.customers?.name) {
+        allocationStatus = `Allocated to ${targetRoll.production_batches.production_orders.customer_orders.customers.name}`
+      } else {
+        allocationStatus = 'Allocated to customer order'
+      }
+    } else if (targetRoll.roll_status === 'partially_allocated') {
+      allocationStatus = 'Partially allocated'
+    } else if (targetRoll.roll_status === 'used') {
+      allocationStatus = 'Used in fulfillment'
+    } else if (targetRoll.roll_status === 'shipped') {
+      allocationStatus = 'Shipped to customer'
+    } else if (targetRoll.roll_status === 'available') {
+      // Check if it's for a customer order or stock building
+      if (targetRoll.production_batches?.production_orders?.customer_orders?.customers?.name) {
+        allocationStatus = `Available for ${targetRoll.production_batches.production_orders.customer_orders.customers.name}`
+      } else {
+        allocationStatus = 'Available for stock building'
+      }
+    }
+
     const rollInfo = {
       rollNumber: targetRoll.roll_number,
       batchId: targetRoll.batch_id,
       fabricType: targetRoll.fabric_type,
       fabricName,
+      color: fabricColor,
+      allocationStatus,
       rollLength: targetRoll.roll_length,
       remainingLength: targetRoll.remaining_length,
       rollStatus: targetRoll.roll_status,
@@ -189,11 +216,11 @@ FABRIC ROLL INFORMATION
 ROLL DETAILS
 ------------
 Roll Number: ${rollInfo.rollNumber || 'N/A'}
-Fabric Type: ${formatToSentenceCase(rollInfo.fabricType)}
 Fabric Name: ${formatToSentenceCase(rollInfo.fabricName)}
+Colour: ${rollInfo.color || 'Natural'}
 Roll Length: ${rollInfo.rollLength ? `${rollInfo.rollLength}m` : 'N/A'}
 Remaining Length: ${rollInfo.remainingLength ? `${rollInfo.remainingLength}m` : 'N/A'}
-Status: ${formatToSentenceCase(rollInfo.rollStatus)}
+Status: ${rollInfo.allocationStatus || 'Available'}
 
 PRODUCTION DETAILS
 ------------------

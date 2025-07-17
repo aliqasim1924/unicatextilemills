@@ -18,6 +18,10 @@ export interface QRCodeData {
   productionOrderId?: string
   productionOrderNumber?: string
   
+  // Color and allocation status
+  color?: string
+  allocationStatus?: string
+  
   // URL for mobile scanning
   detailsUrl?: string
   
@@ -53,6 +57,10 @@ export const qrCodeUtils = {
     productionOrderId?: string
     productionOrderNumber?: string
     
+    // Color and allocation status
+    color?: string
+    allocationStatus?: string
+    
     additionalData?: any
   }): QRCodeData => {
     // Generate unique ID for this QR code (for download URL)
@@ -74,6 +82,10 @@ export const qrCodeUtils = {
       customerName: rollData.customerName,
       productionOrderId: rollData.productionOrderId,
       productionOrderNumber: rollData.productionOrderNumber,
+      
+      // Color and allocation status
+      color: rollData.color || 'Natural',
+      allocationStatus: rollData.allocationStatus || 'Available',
       
       // Download URL for PDF/text file generation
       detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/qr/download/${qrId}`,

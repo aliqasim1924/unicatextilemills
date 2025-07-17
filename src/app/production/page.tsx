@@ -15,6 +15,9 @@ import NewProductionOrderForm from '@/components/forms/NewProductionOrderForm'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
 import ExpandableProductionRow from '@/components/tables/ExpandableProductionRow'
 import { logBusinessEvent } from '@/lib/utils/auditTrail'
+import WeavingCompletionModal from '@/components/production/WeavingCompletionModal'
+import CoatingCompletionModal from '@/components/production/CoatingCompletionModal'
+import CoatingRollAllocationModal from '@/components/production/CoatingRollAllocationModal'
 
 interface ProductionOrder {
   id: string
@@ -89,6 +92,9 @@ export default function ProductionPage() {
   const [showViewModal, setShowViewModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showNewOrderModal, setShowNewOrderModal] = useState(false)
+  const [showWeavingCompletionModal, setShowWeavingCompletionModal] = useState(false)
+  const [showCoatingCompletionModal, setShowCoatingCompletionModal] = useState(false)
+  const [showCoatingRollAllocationModal, setShowCoatingRollAllocationModal] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<ProductionOrder | null>(null)
 
   useEffect(() => {
@@ -176,7 +182,7 @@ export default function ProductionPage() {
             fabric: fabricName
           })
 
-          // For coating production, log base fabric allocation from stock
+          // For coating production, only log commencement (roll allocation happens separately)
           if (order.production_type === 'coating' && order.finished_fabric_id) {
             const { data: finishedFabric, error: finishedFabricError } = await supabase
               .from('finished_fabrics')
@@ -196,11 +202,14 @@ export default function ProductionPage() {
                 ? finishedFabric.base_fabrics[0] 
                 : finishedFabric.base_fabrics
 
+              // Only log that production commenced - actual allocation happens via roll selection
               await logBusinessEvent.productionOrder.baseFabricAllocated(orderId, {
                 fabric: baseFabric.name,
                 quantity: order.quantity_required,
                 batchNumber: baseFabric.last_batch_number || undefined
               })
+
+              console.log(`Coating production commenced for ${order.internal_order_number} - roll allocation required`)
             }
           }
           break
@@ -292,9 +301,26 @@ export default function ProductionPage() {
   }
 
   const updateProductionStatus = (orderId: string, newStatus: string) => {
-    // Store pending update and show PIN modal
-    setPendingStatusUpdate({ orderId, newStatus })
-    setShowPinModal(true)
+    // Find the order to get its details
+    const order = productionOrders.find(o => o.id === orderId)
+    
+    if (newStatus === 'completed' && order?.production_type === 'weaving') {
+      // For weaving completion, open the enhanced modal
+      setSelectedOrder(order)
+      setShowWeavingCompletionModal(true)
+    } else if (newStatus === 'completed' && order?.production_type === 'coating') {
+      // For coating completion, open the enhanced modal
+      setSelectedOrder(order)
+      setShowCoatingCompletionModal(true)
+    } else if (newStatus === 'in_progress' && order?.production_type === 'coating') {
+      // For coating production start, open roll allocation modal
+      setSelectedOrder(order)
+      setShowCoatingRollAllocationModal(true)
+    } else {
+      // For other status changes, use the PIN modal
+      setPendingStatusUpdate({ orderId, newStatus })
+      setShowPinModal(true)
+    }
   }
 
   const handlePinSubmit = async (e: React.FormEvent) => {
@@ -719,6 +745,9 @@ export default function ProductionPage() {
     setShowViewModal(false)
     setShowEditModal(false)
     setShowNewOrderModal(false)
+    setShowWeavingCompletionModal(false)
+    setShowCoatingCompletionModal(false)
+    setShowCoatingRollAllocationModal(false)
     setSelectedOrder(null)
   }
 
@@ -1210,6 +1239,36 @@ export default function ProductionPage() {
         onClose={closeModals}
         onOrderCreated={loadProductionOrders}
       />
+
+      {/* Weaving Completion Modal */}
+      {selectedOrder && (
+        <WeavingCompletionModal
+          isOpen={showWeavingCompletionModal}
+          onClose={closeModals}
+          productionOrder={selectedOrder}
+          onCompleted={loadProductionOrders}
+        />
+      )}
+
+      {/* Coating Completion Modal */}
+      {selectedOrder && (
+        <CoatingCompletionModal
+          isOpen={showCoatingCompletionModal}
+          onClose={closeModals}
+          productionOrder={selectedOrder}
+          onCompleted={loadProductionOrders}
+        />
+      )}
+
+      {/* Coating Roll Allocation Modal */}
+      {selectedOrder && (
+        <CoatingRollAllocationModal
+          isOpen={showCoatingRollAllocationModal}
+          onClose={closeModals}
+          productionOrder={selectedOrder}
+          onAllocationComplete={loadProductionOrders}
+        />
+      )}
     </div>
   )
 } 

@@ -4,7 +4,8 @@ import { Fragment, useEffect, useState } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
-import { logCustomerOrderAudit, formatFieldName } from '@/lib/utils/auditTrail'
+import { logCustomerOrderAudit } from '@/lib/utils/auditTrail'
+import ColorDropdown from '@/components/ui/ColorDropdown'
 
 interface EditOrderModalProps {
   isOpen: boolean
@@ -404,28 +405,16 @@ export default function EditOrderModal({ isOpen, onClose, orderId, onOrderUpdate
 
                       {/* Color Specification */}
                       <div>
-                        <label htmlFor="color" className="block text-sm font-medium text-gray-700 mb-2">
-                          Color *
-                        </label>
-                        <input
-                          type="text"
+                        <ColorDropdown
                           id="color"
                           value={formData.color}
-                          onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                          className={`block w-full px-3 py-2 border rounded-md shadow-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 ${
-                            errors.color ? 'border-red-300' : 'border-gray-300'
-                          }`}
-                          placeholder="e.g., Navy Blue, Forest Green, Black, etc."
+                          onChange={(value) => setFormData({ ...formData, color: value })}
+                          label="Color"
+                          placeholder="Select a color"
+                          error={errors.color}
+                          required={true}
+                          helperText="Specify the exact color required for this order."
                         />
-                        {errors.color && (
-                          <p className="mt-1 text-sm text-red-600 flex items-center">
-                            <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
-                            {errors.color}
-                          </p>
-                        )}
-                        <p className="mt-1 text-sm text-gray-500">
-                          Specify the exact color required for this order.
-                        </p>
                       </div>
 
                       {/* Quantity and Due Date */}

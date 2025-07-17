@@ -11,6 +11,7 @@ import {
   LockClosedIcon
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
+import RollAllocationModal from './RollAllocationModal'
 
 interface Order {
   id: string
@@ -48,6 +49,7 @@ export default function StockAllocationModal({
   const [pin, setPin] = useState('')
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [allocationAmount, setAllocationAmount] = useState<number>(0)
+  const [showRollAllocationModal, setShowRollAllocationModal] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -65,7 +67,7 @@ export default function StockAllocationModal({
           customers (name),
           finished_fabrics (name, color, stock_quantity)
         `)
-        .in('order_status', ['pending', 'partially_allocated'])
+        .in('order_status', ['pending', 'partially_allocated', 'confirmed', 'awaiting_production', 'in_production', 'production_complete'])
         .order('created_at', { ascending: true })
 
       if (error) throw error
@@ -313,13 +315,24 @@ export default function StockAllocationModal({
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                                   {canAllocate ? (
-                                    <button
-                                      onClick={() => handleAllocateStock(order)}
-                                      disabled={allocatingOrderId === order.id}
-                                      className="text-blue-600 hover:text-blue-900 disabled:opacity-50"
-                                    >
-                                      {allocatingOrderId === order.id ? 'Allocating...' : 'Allocate Stock'}
-                                    </button>
+                                    <div className="flex space-x-2">
+                                      <button
+                                        onClick={() => handleAllocateStock(order)}
+                                        disabled={allocatingOrderId === order.id}
+                                        className="text-blue-600 hover:text-blue-900 disabled:opacity-50"
+                                      >
+                                        {allocatingOrderId === order.id ? 'Allocating...' : 'Quick Allocate'}
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setSelectedOrder(order)
+                                          setShowRollAllocationModal(true)
+                                        }}
+                                        className="text-green-600 hover:text-green-900"
+                                      >
+                                        Select Rolls
+                                      </button>
+                                    </div>
                                   ) : (
                                     <span className="text-gray-600">No Stock Available</span>
                                   )}
@@ -449,6 +462,22 @@ export default function StockAllocationModal({
           </div>
         </Dialog>
       </Transition>
+
+      {/* Roll Allocation Modal */}
+      <RollAllocationModal
+        isOpen={showRollAllocationModal}
+        onClose={() => {
+          setShowRollAllocationModal(false)
+          setSelectedOrder(null)
+        }}
+        onAllocationComplete={() => {
+          setShowRollAllocationModal(false)
+          setSelectedOrder(null)
+          loadPendingOrders()
+          onAllocationComplete()
+        }}
+        selectedOrder={selectedOrder}
+      />
     </>
   )
 } 

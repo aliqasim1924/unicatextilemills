@@ -12,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import StockAllocationModal from '@/components/orders/StockAllocationModal'
+import RollAllocationModal from '@/components/orders/RollAllocationModal'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
 
 interface BaseFabric {
@@ -50,357 +51,552 @@ interface StockMovement {
   movement_type: 'in' | 'out' | 'allocation' | 'production'
   quantity: number
   reference_id: string | null
-  reference_type: string | null
   notes: string | null
   created_at: string
-  base_fabrics?: {
-    name: string
-  }
-  finished_fabrics?: {
-    name: string
-  }
 }
 
 export default function StockPage() {
-  const [activeTab, setActiveTab] = useState<'base' | 'finished' | 'movements'>('finished')
   const [baseFabrics, setBaseFabrics] = useState<BaseFabric[]>([])
   const [finishedFabrics, setFinishedFabrics] = useState<FinishedFabric[]>([])
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'finished' | 'base' | 'movements' | 'batches' | 'rolls' | 'colors'>('finished')
   const [searchTerm, setSearchTerm] = useState('')
   const [showAllocationModal, setShowAllocationModal] = useState(false)
+  const [showRollAllocationModal, setShowRollAllocationModal] = useState(false)
+  const [selectedFabric, setSelectedFabric] = useState<FinishedFabric | null>(null)
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+
+  // Add state for finished fabric rolls
+  const [finishedFabricRolls, setFinishedFabricRolls] = useState<any[]>([])
+  const [loadingRolls, setLoadingRolls] = useState(false)
+
+  // Add state for base fabric rolls
+  const [baseFabricRolls, setBaseFabricRolls] = useState<any[]>([])
+  const [loadingBaseRolls, setLoadingBaseRolls] = useState(false)
+
+  // Add state for batches
+  const [batches, setBatches] = useState<any[]>([])
+  const [loadingBatches, setLoadingBatches] = useState(false)
+  const [isGeneratingBatchReport, setIsGeneratingBatchReport] = useState(false)
 
   useEffect(() => {
     loadStockData()
+    fetchFinishedFabricRolls()
+    fetchBaseFabricRolls()
+    fetchBatches()
   }, [])
 
   const loadStockData = async () => {
     try {
       setLoading(true)
       
-      // Load base data without joins first
-      const [baseResponse, finishedResponse, movementsResponse] = await Promise.all([
-        supabase.from('base_fabrics').select('*').order('name'),
-        supabase.from('finished_fabrics').select('*').order('name'),
-        supabase.from('stock_movements').select('*').order('created_at', { ascending: false }).limit(100)
-      ])
-
-      if (baseResponse.error) {
-        console.error('Base fabrics error:', baseResponse.error)
-        throw baseResponse.error
-      }
-      if (finishedResponse.error) {
-        console.error('Finished fabrics error:', finishedResponse.error)
-        throw finishedResponse.error
-      }
-      if (movementsResponse.error) {
-        console.error('Stock movements error:', movementsResponse.error)
-        throw movementsResponse.error
-      }
-
-      // Create lookup maps for fabric names
-      const baseFabricsMap = new Map(baseResponse.data?.map(f => [f.id, f]) || [])
-      const finishedFabricsMap = new Map(finishedResponse.data?.map(f => [f.id, f]) || [])
-
-      // Enhance finished fabrics with base fabric names
-      const enhancedFinishedFabrics = finishedResponse.data?.map(fabric => ({
-        ...fabric,
-        base_fabrics: fabric.base_fabric_id ? { name: baseFabricsMap.get(fabric.base_fabric_id)?.name || 'Unknown' } : null
-      })) || []
-
-      // Enhance stock movements with fabric names
-      const enhancedStockMovements = movementsResponse.data?.map(movement => {
-        const fabricData = movement.fabric_type === 'base_fabric' 
-          ? baseFabricsMap.get(movement.fabric_id)
-          : finishedFabricsMap.get(movement.fabric_id)
-        
-        return {
-          ...movement,
-          base_fabrics: movement.fabric_type === 'base_fabric' ? { name: fabricData?.name || 'Unknown' } : null,
-          finished_fabrics: movement.fabric_type === 'finished_fabric' ? { name: fabricData?.name || 'Unknown' } : null
-        }
-      }) || []
-
-      console.log('Data loaded successfully:', {
-        baseFabrics: baseResponse.data?.length,
-        finishedFabrics: enhancedFinishedFabrics.length,
-        stockMovements: enhancedStockMovements.length
-      })
-
-      setBaseFabrics(baseResponse.data || [])
-      setFinishedFabrics(enhancedFinishedFabrics)
-      setStockMovements(enhancedStockMovements)
+      // Fetch base fabrics
+      const { data: baseFabricsData, error: baseFabricsError } = await supabase
+        .from('base_fabrics')
+        .select('*')
+        .order('name')
+      
+      if (baseFabricsError) throw baseFabricsError
+      
+      // Fetch finished fabrics
+      const { data: finishedFabricsData, error: finishedFabricsError } = await supabase
+        .from('finished_fabrics')
+        .select('*, base_fabrics(name)')
+        .order('name')
+      
+      if (finishedFabricsError) throw finishedFabricsError
+      
+      // Fetch recent stock movements
+      const { data: movementsData, error: movementsError } = await supabase
+        .from('stock_movements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      
+      if (movementsError) throw movementsError
+      
+      setBaseFabrics(baseFabricsData || [])
+      setFinishedFabrics(finishedFabricsData || [])
+      setStockMovements(movementsData || [])
     } catch (error) {
       console.error('Error loading stock data:', error)
-      console.error('Error details:', JSON.stringify(error, null, 2))
     } finally {
       setLoading(false)
     }
   }
 
-  const isLowStock = (current: number, minimum: number) => current <= minimum
+  // Function to fetch finished fabric rolls
+  const fetchFinishedFabricRolls = async () => {
+    setLoadingRolls(true)
+    try {
+      // Start with a simple query to check if table exists and has basic structure
+      const { data, error } = await supabase
+        .from('fabric_rolls')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (error) {
+        console.error('Error fetching finished fabric rolls:', error)
+        console.error('Error details:', JSON.stringify(error, null, 2))
+        // Set empty array if table doesn't exist or has no data
+        setFinishedFabricRolls([])
+        return
+      }
+      
+      console.log('Fabric rolls data:', data)
+      console.log('Number of fabric rolls:', data?.length || 0)
+      if (data && data.length > 0) {
+        console.log('Sample fabric roll structure:', Object.keys(data[0]))
+      }
+      
+      // If we have data, try to enrich it with related information
+      if (data && data.length > 0) {
+        try {
+          const enrichedData = await Promise.all(
+            data.map(async (roll) => {
+              let enrichedRoll = { ...roll }
+              
+              // Try to get finished fabric info if fabric_id exists
+              if (roll.fabric_id && roll.fabric_type === 'finished_fabric') {
+                const { data: fabricData } = await supabase
+                  .from('finished_fabrics')
+                  .select('name, color')
+                  .eq('id', roll.fabric_id)
+                  .single()
+                
+                if (fabricData) {
+                  enrichedRoll.finished_fabrics = fabricData
+                }
+              }
+              
+              // Try to get production batch info if batch_id exists
+              if (roll.batch_id) {
+                const { data: batchData } = await supabase
+                  .from('production_batches')
+                  .select(`
+                    batch_number,
+                    production_orders(
+                      internal_order_number,
+                      customer_orders(
+                        internal_order_number,
+                        customers(name)
+                      )
+                    )
+                  `)
+                  .eq('id', roll.batch_id)
+                  .single()
+                
+                if (batchData) {
+                  enrichedRoll.production_batches = batchData
+                }
+              }
+              
+              return enrichedRoll
+            })
+          )
+          
+          setFinishedFabricRolls(enrichedData)
+        } catch (enrichError) {
+          console.warn('Error enriching fabric rolls data:', enrichError)
+          // Fall back to basic data if enrichment fails
+          setFinishedFabricRolls(data)
+        }
+      } else {
+        setFinishedFabricRolls([])
+      }
+    } catch (error) {
+      console.error('Error fetching finished fabric rolls:', error)
+      console.error('Error details:', JSON.stringify(error, null, 2))
+      setFinishedFabricRolls([])
+    } finally {
+      setLoadingRolls(false)
+    }
+  }
 
-  const filteredBaseFabrics = baseFabrics.filter(fabric =>
-    fabric.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (fabric.color && fabric.color.toLowerCase().includes(searchTerm.toLowerCase()))
-  )
+  // Function to fetch base fabric rolls (loom rolls)
+  const fetchBaseFabricRolls = async () => {
+    setLoadingBaseRolls(true)
+    try {
+      // Start with a simple query to check if loom_rolls table exists
+      const { data, error } = await supabase
+        .from('loom_rolls')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (error) {
+        console.error('Error fetching base fabric rolls:', error)
+        // Set empty array if table doesn't exist or has no data
+        setBaseFabricRolls([])
+        return
+      }
+      
+      // If we have data, try to enrich it with related information
+      if (data && data.length > 0) {
+        try {
+          const enrichedData = await Promise.all(
+            data.map(async (roll) => {
+              let enrichedRoll = { ...roll }
+              
+              // Try to get loom production details if loom_production_detail_id exists
+              if (roll.loom_production_detail_id) {
+                const { data: loomData } = await supabase
+                  .from('loom_production_details')
+                  .select(`
+                    production_orders(
+                      internal_order_number,
+                      base_fabric_id,
+                      base_fabrics(name, color),
+                      customer_orders(
+                        internal_order_number,
+                        customers(name)
+                      )
+                    ),
+                    looms(loom_number, loom_name)
+                  `)
+                  .eq('id', roll.loom_production_detail_id)
+                  .single()
+                
+                if (loomData) {
+                  enrichedRoll.loom_production_details = loomData
+                }
+              }
+              
+              return enrichedRoll
+            })
+          )
+          
+          setBaseFabricRolls(enrichedData)
+        } catch (enrichError) {
+          console.warn('Error enriching loom rolls data:', enrichError)
+          // Fall back to basic data if enrichment fails
+          setBaseFabricRolls(data)
+        }
+      } else {
+        setBaseFabricRolls([])
+      }
+    } catch (error) {
+      console.error('Error fetching base fabric rolls:', error)
+      setBaseFabricRolls([])
+    } finally {
+      setLoadingBaseRolls(false)
+    }
+  }
+
+  const fetchBatches = async () => {
+    try {
+      setLoadingBatches(true)
+      
+      const response = await fetch('/api/production/batches')
+      const result = await response.json()
+      
+      if (!response.ok) {
+        console.error('Error fetching batches:', result.error)
+        console.error('Error details:', result.details)
+        console.error('Response status:', response.status)
+        setBatches([])
+      } else {
+        setBatches(result.batches || [])
+      }
+    } catch (error) {
+      console.error('Error fetching batches:', error)
+      setBatches([])
+    } finally {
+      setLoadingBatches(false)
+    }
+  }
+
+  const handleGenerateStockReport = async () => {
+    try {
+      setIsGeneratingReport(true)
+      
+      const response = await fetch('/api/pdf/stock-management-report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          options: {
+            includeMovements: true,
+            includeLowStock: true
+          }
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to generate stock report')
+      }
+
+      // Download the PDF
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `stock-management-report-${new Date().toISOString().split('T')[0]}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      
+    } catch (error) {
+      console.error('Error generating stock report:', error)
+      alert('Failed to generate stock report. Please try again.')
+    } finally {
+      setIsGeneratingReport(false)
+    }
+  }
+
+  const handleGenerateBatchReport = async (batchId: string) => {
+    try {
+      setIsGeneratingBatchReport(true)
+      
+      const response = await fetch('/api/pdf/batch-report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ batchId })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to generate batch report')
+      }
+
+      // Download the PDF
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      
+      // Get batch number for filename
+      const batch = batches.find(b => b.id === batchId)
+      const batchNumber = batch?.batch_number || 'batch'
+      
+      a.download = `batch-report-${batchNumber}-${new Date().toISOString().split('T')[0]}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      
+    } catch (error) {
+      console.error('Error generating batch report:', error)
+      alert('Failed to generate batch report. Please try again.')
+    } finally {
+      setIsGeneratingBatchReport(false)
+    }
+  }
+
+  const isLowStock = (current: number, minimum: number) => current <= minimum
 
   const filteredFinishedFabrics = finishedFabrics.filter(fabric =>
     fabric.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (fabric.color && fabric.color.toLowerCase().includes(searchTerm.toLowerCase()))
+    fabric.color?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const filteredMovements = stockMovements.filter(movement =>
-    movement.base_fabrics?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    movement.finished_fabrics?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    movement.notes?.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredBaseFabrics = baseFabrics.filter(fabric =>
+    fabric.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    fabric.color?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
+  const totalBaseFabricStock = baseFabrics.reduce((sum, fabric) => sum + fabric.stock_quantity, 0)
+  const totalFinishedFabricStock = finishedFabrics.reduce((sum, fabric) => sum + fabric.stock_quantity, 0)
+  const lowStockItems = [...baseFabrics, ...finishedFabrics].filter(fabric => isLowStock(fabric.stock_quantity, fabric.minimum_stock))
 
-  const getMovementIcon = (type: string) => {
-    switch (type) {
-      case 'in':
-      case 'production':
-        return <ArrowUpIcon className="h-4 w-4 text-green-500" />
-      case 'out':
-      case 'allocation':
-        return <ArrowDownIcon className="h-4 w-4 text-red-500" />
-      default:
-        return <ClockIcon className="h-4 w-4 text-gray-700" />
+  // Color-wise stock calculation
+  const colorWiseStock = finishedFabrics.reduce((acc, fabric) => {
+    const color = fabric.color || 'Natural'
+    if (!acc[color]) {
+      acc[color] = {
+        color,
+        totalStock: 0,
+        fabrics: []
+      }
     }
-  }
+    if (fabric.stock_quantity > 0) {
+      acc[color].totalStock += fabric.stock_quantity
+      acc[color].fabrics.push(fabric)
+    }
+    return acc
+  }, {} as Record<string, { color: string; totalStock: number; fabrics: FinishedFabric[] }>)
 
-  const getMovementColor = (type: string) => {
-    switch (type) {
-      case 'in':
-      case 'production':
-        return 'text-green-600'
-      case 'out':
-      case 'allocation':
-        return 'text-red-600'
-      default:
-        return 'text-gray-600'
-    }
-  }
+  // Filter out colors with 0 stock
+  const availableColors = Object.values(colorWiseStock).filter(colorData => colorData.totalStock > 0)
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="sm:flex sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Stock Management</h1>
-          <p className="mt-2 text-gray-600">Monitor and manage fabric inventory</p>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Stock Management</h1>
+        <p className="text-gray-600">Monitor inventory levels and manage stock allocation</p>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <CubeIcon className="h-8 w-8 text-blue-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Base Fabric Stock</p>
+              <p className="text-2xl font-semibold text-gray-900">{totalBaseFabricStock.toLocaleString()}m</p>
+            </div>
+          </div>
         </div>
-        <div className="mt-4 sm:mt-0 flex space-x-3">
-          <PDFGenerator
-            type="stock-management-report"
-            buttonText="Stock Report"
-            buttonClassName="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-          />
-          <button 
-            onClick={() => setShowAllocationModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-          >
-            <CubeIcon className="h-4 w-4 mr-2" />
-            Allocate Stock
-          </button>
-          <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Add Stock
-          </button>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <CubeIcon className="h-8 w-8 text-green-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Finished Fabric Stock</p>
+              <p className="text-2xl font-semibold text-gray-900">{totalFinishedFabricStock.toLocaleString()}m</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <ExclamationTriangleIcon className="h-8 w-8 text-yellow-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Low Stock Items</p>
+              <p className="text-2xl font-semibold text-gray-900">{lowStockItems.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <ClockIcon className="h-8 w-8 text-purple-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Recent Movements</p>
+              <p className="text-2xl font-semibold text-gray-900">{stockMovements.length}</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow border">
-          <div className="flex items-center">
-            <CubeIcon className="h-8 w-8 text-blue-500" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Base Fabrics</p>
-              <p className="text-2xl font-bold text-gray-900">{baseFabrics.length}</p>
-            </div>
-          </div>
+      {/* Search and Actions */}
+      <div className="mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
+        <div className="relative flex-1 max-w-md">
+          <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search fabrics..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
         </div>
-        <div className="bg-white p-6 rounded-lg shadow border">
-          <div className="flex items-center">
-            <CubeIcon className="h-8 w-8 text-green-500" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Finished Fabrics</p>
-              <p className="text-2xl font-bold text-gray-900">{finishedFabrics.length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border">
-          <div className="flex items-center">
-            <ExclamationTriangleIcon className="h-8 w-8 text-orange-500" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Low Stock (Base)</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {baseFabrics.filter(f => isLowStock(f.stock_quantity, f.minimum_stock)).length}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border">
-          <div className="flex items-center">
-            <ExclamationTriangleIcon className="h-8 w-8 text-red-500" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Low Stock (Finished)</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {finishedFabrics.filter(f => isLowStock(f.stock_quantity, f.minimum_stock)).length}
-              </p>
-            </div>
-          </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setShowAllocationModal(true)}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            Quick Allocate
+          </button>
+          <button 
+            onClick={() => setShowRollAllocationModal(true)}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            Select Rolls
+          </button>
+          <button 
+            onClick={handleGenerateStockReport}
+            disabled={isGeneratingReport}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isGeneratingReport ? 'Generating...' : 'Generate Report'}
+          </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8 px-6">
-            <button
-              onClick={() => setActiveTab('finished')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'finished'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-700 hover:text-gray-800 hover:border-gray-300'
-              }`}
-            >
-              Finished Fabrics
-            </button>
-            <button
-              onClick={() => setActiveTab('base')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'base'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-700 hover:text-gray-800 hover:border-gray-300'
-              }`}
-            >
-              Base Fabrics
-            </button>
-            <button
-              onClick={() => setActiveTab('movements')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'movements'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-700 hover:text-gray-800 hover:border-gray-300'
-              }`}
-            >
-              Stock Movements
-            </button>
-          </nav>
-        </div>
+      <div className="mb-6">
+        <nav className="flex space-x-8">
+          <button
+            onClick={() => setActiveTab('finished')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'finished'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Finished Fabrics ({finishedFabrics.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('base')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'base'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Base Fabrics ({baseFabrics.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('movements')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'movements'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Stock Movements ({stockMovements.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('batches')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'batches'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Production Batches ({batches.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('rolls')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'rolls'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Individual Rolls ({finishedFabricRolls.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('colors')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'colors'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Stock by Color ({availableColors.length})
+          </button>
+        </nav>
+      </div>
 
-        {/* Search */}
-        <div className="p-6 border-b border-gray-200">
-          <div className="relative max-w-md">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <MagnifyingGlassIcon className="h-5 w-5 text-gray-600" />
+      {/* Content */}
+      <div className="bg-white rounded-lg shadow">
+        {activeTab === 'finished' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Finished Fabric Inventory</h2>
+              <p className="text-sm text-gray-600 mt-1">Current stock levels and allocation status</p>
             </div>
-            <input
-              type="text"
-              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white text-gray-900 placeholder-gray-600 focus:outline-none focus:placeholder-gray-700 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Search stock..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Tab Content */}
-        <div className="p-6">
-          {activeTab === 'finished' && (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Product Details
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Specifications
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Stock Level
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Base Fabric
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredFinishedFabrics.map((fabric) => (
-                    <tr key={fabric.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{fabric.name}</div>
-                          <div className="text-sm text-gray-700">{fabric.color}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {fabric.gsm}GSM • {fabric.width_meters}m
-                        </div>
-                        <div className="text-sm text-gray-700">{fabric.coating_type}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="text-sm font-medium text-gray-900">
-                            {fabric.stock_quantity}m
-                          </div>
-                          {isLowStock(fabric.stock_quantity, fabric.minimum_stock) && (
-                            <ExclamationTriangleIcon className="h-4 w-4 text-red-500 ml-2" />
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-700">
-                          Min: {fabric.minimum_stock}m
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {fabric.base_fabrics?.name || 'N/A'}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button 
-                          onClick={() => setShowAllocationModal(true)}
-                          className="text-blue-600 hover:text-blue-900 mr-3"
-                        >
-                          Allocate
-                        </button>
-                        <button className="text-gray-600 hover:text-gray-900">
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {activeTab === 'base' && (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -415,7 +611,108 @@ export default function StockPage() {
                       Stock Level
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Info
+                      Availability
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredFinishedFabrics.map((fabric) => (
+                    <tr key={fabric.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">{fabric.name}</div>
+                          <div className="text-sm text-gray-700">{fabric.color || 'Natural'}</div>
+                          <div className="text-xs text-gray-500">
+                            Base: {fabric.base_fabrics?.name || 'N/A'}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          <div>{fabric.gsm} GSM</div>
+                          <div>{fabric.width_meters}m width</div>
+                          <div className="text-xs text-gray-500">{fabric.coating_type || 'Standard'}</div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="text-lg font-semibold text-gray-900">
+                            {fabric.stock_quantity.toLocaleString()}m
+                          </div>
+                          {isLowStock(fabric.stock_quantity, fabric.minimum_stock) && (
+                            <ExclamationTriangleIcon className="ml-2 h-5 w-5 text-red-500" />
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Min: {fabric.minimum_stock}m
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className={`w-3 h-3 rounded-full mr-2 ${
+                            fabric.stock_quantity > fabric.minimum_stock 
+                              ? 'bg-green-400' 
+                              : fabric.stock_quantity > 0 
+                              ? 'bg-yellow-400' 
+                              : 'bg-red-400'
+                          }`}></div>
+                          <span className={`text-sm font-medium ${
+                            fabric.stock_quantity > fabric.minimum_stock 
+                              ? 'text-green-800' 
+                              : fabric.stock_quantity > 0 
+                              ? 'text-yellow-800' 
+                              : 'text-red-800'
+                          }`}>
+                            {fabric.stock_quantity > fabric.minimum_stock 
+                              ? 'In Stock' 
+                              : fabric.stock_quantity > 0 
+                              ? 'Low Stock' 
+                              : 'Out of Stock'
+                            }
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <button 
+                          onClick={() => setSelectedFabric(fabric)}
+                          className="text-blue-600 hover:text-blue-900 mr-3"
+                          disabled={fabric.stock_quantity === 0}
+                        >
+                          View Details
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'base' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Base Fabric Inventory</h2>
+              <p className="text-sm text-gray-600 mt-1">Raw materials for production</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Fabric Details
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Specifications
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Stock Level
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Availability
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                       Actions
@@ -428,36 +725,59 @@ export default function StockPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
                           <div className="text-sm font-medium text-gray-900">{fabric.name}</div>
-                          <div className="text-sm text-gray-700">{fabric.color || 'N/A'}</div>
+                          <div className="text-sm text-gray-700">{fabric.color || 'Natural'}</div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">
-                          {fabric.gsm}GSM • {fabric.width_meters}m
+                          <div>{fabric.gsm} GSM</div>
+                          <div>{fabric.width_meters}m width</div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="text-sm font-medium text-gray-900">
-                            {fabric.stock_quantity}m
+                          <div className="text-lg font-semibold text-gray-900">
+                            {fabric.stock_quantity.toLocaleString()}m
                           </div>
                           {isLowStock(fabric.stock_quantity, fabric.minimum_stock) && (
-                            <ExclamationTriangleIcon className="h-4 w-4 text-red-500 ml-2" />
+                            <ExclamationTriangleIcon className="ml-2 h-5 w-5 text-red-500" />
                           )}
                         </div>
-                        <div className="text-xs text-gray-700">
+                        <div className="text-xs text-gray-500">
                           Min: {fabric.minimum_stock}m
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">N/A</div>
+                        <div className="flex items-center">
+                          <div className={`w-3 h-3 rounded-full mr-2 ${
+                            fabric.stock_quantity > fabric.minimum_stock 
+                              ? 'bg-green-400' 
+                              : fabric.stock_quantity > 0 
+                              ? 'bg-yellow-400' 
+                              : 'bg-red-400'
+                          }`}></div>
+                          <span className={`text-sm font-medium ${
+                            fabric.stock_quantity > fabric.minimum_stock 
+                              ? 'text-green-800' 
+                              : fabric.stock_quantity > 0 
+                              ? 'text-yellow-800' 
+                              : 'text-red-800'
+                          }`}>
+                            {fabric.stock_quantity > fabric.minimum_stock 
+                              ? 'In Stock' 
+                              : fabric.stock_quantity > 0 
+                              ? 'Low Stock' 
+                              : 'Out of Stock'
+                            }
+                          </span>
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button className="text-blue-600 hover:text-blue-900 mr-3">
-                          Adjust
-                        </button>
-                        <button className="text-gray-600 hover:text-gray-900">
-                          Edit
+                        <button 
+                          className="text-blue-600 hover:text-blue-900"
+                          disabled={fabric.stock_quantity === 0}
+                        >
+                          View Details
                         </button>
                       </td>
                     </tr>
@@ -465,24 +785,30 @@ export default function StockPage() {
                 </tbody>
               </table>
             </div>
-          )}
+          </div>
+        )}
 
-          {activeTab === 'movements' && (
+        {activeTab === 'movements' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Recent Stock Movements</h2>
+              <p className="text-sm text-gray-600 mt-1">Latest inventory transactions</p>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Date & Time
+                      Date
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Fabric
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                      Movement
+                      Type
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                       Quantity
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Reference
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                       Notes
@@ -490,61 +816,369 @@ export default function StockPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredMovements.map((movement) => (
+                  {stockMovements.map((movement) => (
                     <tr key={movement.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {formatDate(movement.created_at)}
-                        </div>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {new Date(movement.created_at).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {movement.fabric_type === 'base_fabric' 
-                            ? movement.base_fabrics?.name 
-                            : movement.finished_fabrics?.name}
-                        </div>
-                        <div className="text-sm text-gray-700 capitalize">
-                          {movement.fabric_type.replace('_', ' ')}
-                        </div>
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          movement.movement_type === 'in' 
+                            ? 'bg-green-100 text-green-800' 
+                            : movement.movement_type === 'out'
+                            ? 'bg-red-100 text-red-800'
+                            : movement.movement_type === 'allocation'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {movement.movement_type.toUpperCase()}
+                        </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          {getMovementIcon(movement.movement_type)}
-                          <span className={`ml-2 text-sm font-medium capitalize ${getMovementColor(movement.movement_type)}`}>
-                            {movement.movement_type}
-                          </span>
-                        </div>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {movement.movement_type === 'in' ? '+' : '-'}{movement.quantity}m
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className={`text-sm font-medium ${getMovementColor(movement.movement_type)}`}>
-                          {movement.quantity > 0 ? '+' : ''}{movement.quantity}m
-                        </div>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {movement.reference_id || 'N/A'}
                       </td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">
-                          {movement.notes || '-'}
-                        </div>
-                        {movement.reference_type && (
-                          <div className="text-xs text-gray-700">
-                            Ref: {movement.reference_type}
-                          </div>
-                        )}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {movement.notes || 'N/A'}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {activeTab === 'batches' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Production Batches</h2>
+              <p className="text-sm text-gray-600 mt-1">Recent production batches with roll details</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Batch Number
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Production Type
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Customer/Purpose
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Quantity
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Created
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {loadingBatches ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                        Loading batches...
+                      </td>
+                    </tr>
+                  ) : batches.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                        No batches found
+                      </td>
+                    </tr>
+                  ) : (
+                    batches.map((batch) => (
+                      <tr key={batch.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{batch.batch_number}</div>
+                          <div className="text-sm text-gray-500">
+                            {batch.production_orders?.internal_order_number || 'N/A'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                            batch.production_type === 'weaving' 
+                              ? 'bg-blue-100 text-blue-800' 
+                              : 'bg-green-100 text-green-800'
+                          }`}>
+                            {batch.production_type.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {batch.production_orders?.customer_orders?.customers?.name || 'Stock Building'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div>{batch.planned_quantity.toLocaleString()}m planned</div>
+                          <div className="text-xs text-gray-500">
+                            {batch.actual_a_grade_quantity?.toLocaleString() || 0}m actual
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                            batch.batch_status === 'completed' 
+                              ? 'bg-green-100 text-green-800' 
+                              : batch.batch_status === 'in_progress'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {batch.batch_status.replace('_', ' ').toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {new Date(batch.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <button 
+                            onClick={() => handleGenerateBatchReport(batch.id)}
+                            disabled={isGeneratingBatchReport}
+                            className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isGeneratingBatchReport ? 'Generating...' : 'Generate Report'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'rolls' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Individual Fabric Rolls</h2>
+              <p className="text-sm text-gray-600 mt-1">Available rolls by quality grade for manual allocation</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Roll Details
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Fabric & Quality
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Length & Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Production Info
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Allocation Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {loadingRolls ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                        Loading rolls...
+                      </td>
+                    </tr>
+                  ) : finishedFabricRolls.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                        No rolls found
+                      </td>
+                    </tr>
+                  ) : (
+                    finishedFabricRolls.map((roll) => (
+                      <tr key={roll.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{roll.roll_number}</div>
+                          <div className="text-sm text-gray-500">
+                            {roll.roll_type?.replace('_', ' ') || 'Standard'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {roll.finished_fabrics?.name || 'N/A'}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {roll.finished_fabrics?.color || 'Natural'}
+                            </div>
+                            <div className="flex items-center mt-1">
+                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                roll.quality_grade === 'A' 
+                                  ? 'bg-green-100 text-green-800' 
+                                  : roll.quality_grade === 'B'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}>
+                                Grade {roll.quality_grade}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            <div className="font-medium">{roll.roll_length || 0}m total</div>
+                            <div className="text-gray-700">{roll.remaining_length || 0}m available</div>
+                          </div>
+                          <div className="flex items-center mt-1">
+                            <div className={`w-3 h-3 rounded-full mr-2 ${
+                              roll.roll_status === 'available' 
+                                ? 'bg-green-400' 
+                                : roll.roll_status === 'partially_allocated'
+                                ? 'bg-yellow-400' 
+                                : 'bg-red-400'
+                            }`}></div>
+                            <span className={`text-xs font-medium ${
+                              roll.roll_status === 'available' 
+                                ? 'text-green-800' 
+                                : roll.roll_status === 'partially_allocated'
+                                ? 'text-yellow-800' 
+                                : 'text-red-800'
+                            }`}>
+                              {roll.roll_status?.replace('_', ' ') || 'Unknown'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div>{roll.production_batches?.batch_number || 'N/A'}</div>
+                          <div className="text-xs text-gray-500">
+                            {roll.production_batches?.production_orders?.internal_order_number || 'N/A'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {roll.production_batches?.production_orders?.customer_orders?.customers?.name || 'Available for allocation'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          {roll.roll_status === 'available' && (roll.remaining_length || 0) > 0 ? (
+                            <button 
+                              onClick={() => {
+                                setShowRollAllocationModal(true)
+                              }}
+                              className="text-blue-600 hover:text-blue-900"
+                            >
+                              Allocate
+                            </button>
+                          ) : (
+                            <span className="text-gray-600">Not Available</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'colors' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Stock by Color</h2>
+              <p className="text-sm text-gray-600 mt-1">Available stock grouped by color</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Color
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Total Stock
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Fabrics Available
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Fabric Details
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {availableColors.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
+                        No colors with stock available
+                      </td>
+                    </tr>
+                  ) : (
+                    availableColors.map((colorData) => (
+                      <tr key={colorData.color} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className="text-sm font-medium text-gray-900">{colorData.color}</div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-lg font-semibold text-gray-900">
+                            {colorData.totalStock.toLocaleString()}m
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {colorData.fabrics.length} fabric{colorData.fabrics.length !== 1 ? 's' : ''}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="space-y-1">
+                            {colorData.fabrics.map((fabric) => (
+                              <div key={fabric.id} className="text-sm">
+                                <span className="font-medium text-gray-900">{fabric.name}</span>
+                                <span className="text-gray-600 ml-2">({fabric.stock_quantity}m)</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Stock Allocation Modal */}
-      <StockAllocationModal
-        isOpen={showAllocationModal}
-        onClose={() => setShowAllocationModal(false)}
+      {selectedFabric && (
+        <StockAllocationModal
+          isOpen={true}
+          onClose={() => setSelectedFabric(null)}
+          onAllocationComplete={loadStockData}
+        />
+      )}
+
+      {/* Allocation Modal */}
+      {showAllocationModal && (
+        <StockAllocationModal
+          isOpen={showAllocationModal}
+          onClose={() => setShowAllocationModal(false)}
+          onAllocationComplete={loadStockData}
+        />
+      )}
+
+      {/* Roll Allocation Modal */}
+      <RollAllocationModal
+        isOpen={showRollAllocationModal}
+        onClose={() => setShowRollAllocationModal(false)}
         onAllocationComplete={() => {
-          loadStockData() // Refresh stock data after allocation
+          loadStockData()
+          fetchFinishedFabricRolls()
         }}
       />
     </div>

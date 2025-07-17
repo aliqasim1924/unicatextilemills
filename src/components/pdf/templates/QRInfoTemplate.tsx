@@ -63,6 +63,8 @@ interface QRInfoTemplateProps {
     batchId?: string
     fabricType?: string
     fabricName?: string
+    color?: string
+    allocationStatus?: string
     rollLength?: number
     remainingLength?: number
     rollStatus?: string
@@ -113,12 +115,12 @@ const QRInfoTemplate: React.FC<QRInfoTemplateProps> = ({ qrData }) => {
             <Text style={styles.value}>{qrData.rollNumber || 'N/A'}</Text>
           </View>
           <View style={styles.row}>
-            <Text style={styles.label}>Fabric Type:</Text>
-            <Text style={styles.value}>{formatToSentenceCase(qrData.fabricType)}</Text>
-          </View>
-          <View style={styles.row}>
             <Text style={styles.label}>Fabric Name:</Text>
             <Text style={styles.value}>{formatToSentenceCase(qrData.fabricName)}</Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.label}>Colour:</Text>
+            <Text style={styles.value}>{qrData.color || 'Natural'}</Text>
           </View>
           <View style={styles.row}>
             <Text style={styles.label}>Roll Length:</Text>
@@ -130,7 +132,7 @@ const QRInfoTemplate: React.FC<QRInfoTemplateProps> = ({ qrData }) => {
           </View>
           <View style={styles.row}>
             <Text style={styles.label}>Status:</Text>
-            <Text style={styles.value}>{formatToSentenceCase(qrData.rollStatus)}</Text>
+            <Text style={styles.value}>{qrData.allocationStatus || 'Available'}</Text>
           </View>
         </View>
 
