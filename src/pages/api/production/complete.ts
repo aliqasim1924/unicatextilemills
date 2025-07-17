@@ -35,7 +35,7 @@ export default async function handler(
       })
     }
 
-    // Get production order details with customer color information
+    // Get production order details
     const { data: productionOrder, error: orderError } = await supabase
       .from('production_orders')
       .select(`
@@ -48,11 +48,6 @@ export default async function handler(
           customers (
             name
           )
-        ),
-        customer_order_items:customer_order_item_id (
-          id,
-          color,
-          quantity_ordered
         )
       `)
       .eq('id', productionOrderId)
@@ -78,11 +73,13 @@ export default async function handler(
 
     console.log('Generated batch number:', batchNumber)
 
-    // Get customer color from the order item
-    const customerColor = productionOrder.customer_order_items?.color || productionOrder.customer_color || 'Natural'
-    const customerOrderItemId = productionOrder.customer_order_items?.id || productionOrder.customer_order_item_id
+    // Get customer color directly from production order (set during creation)
+    const customerColor = productionOrder.customer_color || 'Natural'
+    const customerOrderItemId = productionOrder.customer_order_item_id
 
     console.log('Customer color for production:', customerColor)
+    console.log('Production order customer_color field:', productionOrder.customer_color)
+    console.log('Customer order item ID:', customerOrderItemId)
 
     // Create batch record with customer color information
     const { data: batch, error: batchError } = await supabase
