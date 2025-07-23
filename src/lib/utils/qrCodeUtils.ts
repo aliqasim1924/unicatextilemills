@@ -62,10 +62,12 @@ export const qrCodeUtils = {
     allocationStatus?: string
     
     additionalData?: any
+    rollId?: string // <-- add rollId for direct lookup
   }): QRCodeData => {
-    // Generate unique ID for this QR code (for download URL)
-    const qrId = `qr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    
+    // Use rollId for direct lookup if provided
+    const detailsUrl = rollData.rollId
+      ? `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/roll/${rollData.rollId}`
+      : `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/qr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     return {
       type: 'fabric_roll',
       rollNumber: rollData.rollNumber,
@@ -74,25 +76,18 @@ export const qrCodeUtils = {
       fabricId: rollData.fabricId,
       rollLength: rollData.rollLength,
       qrGeneratedAt: new Date().toISOString(),
-      
-      // Enhanced context
       productionPurpose: rollData.productionPurpose || 'stock_building',
       customerOrderId: rollData.customerOrderId,
       customerOrderNumber: rollData.customerOrderNumber,
       customerName: rollData.customerName,
       productionOrderId: rollData.productionOrderId,
       productionOrderNumber: rollData.productionOrderNumber,
-      
-      // Color and allocation status
       color: rollData.color || 'Natural',
       allocationStatus: rollData.allocationStatus || 'Available',
-      
-      // Download URL for PDF/text file generation
-      detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/${qrId}`,
-      
+      detailsUrl,
       additionalData: {
         ...rollData.additionalData,
-        qrId: qrId
+        rollId: rollData.rollId
       }
     }
   },
@@ -405,7 +400,8 @@ export const qrCodeUtils = {
           batchId: roll.batch_id,
           fabricType: roll.fabric_type,
           fabricId: roll.fabric_id,
-          rollLength: roll.roll_length
+          rollLength: roll.roll_length,
+          rollId: roll.id // Pass the actual roll ID
         })
 
         return {

@@ -19,6 +19,7 @@ interface FabricRoll {
   created_at: string
   fabric_name?: string // Added for display purposes
   fabric_color?: string // Added for color display
+  customer_color?: string // Added for correct color display
   production_batches?: {
     batch_number: string
     production_type: string
@@ -38,6 +39,7 @@ interface FabricRoll {
   } | null
   finished_fabrics?: {
     name: string
+    color: string
   } | null
   
   // Enhanced QR context
@@ -602,7 +604,12 @@ export default function QRCodesPage() {
                               <strong>Fabric:</strong> {roll.fabric_name}
                             </p>
                             <p className="text-xs text-gray-600 mb-1">
-                              <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {roll.fabric_color || 'Natural'}
+                              <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {
+                                roll.customer_color ||
+                                roll.fabric_color ||
+                                roll.finished_fabrics?.color ||
+                                'Natural'
+                              }
                             </p>
                             <p className="text-xs text-gray-600 mb-3">
                               <strong>Created:</strong> {new Date(roll.created_at).toLocaleDateString()}
@@ -757,7 +764,12 @@ export default function QRCodesPage() {
                       <strong>Batch:</strong> {roll.production_batches?.batch_number || 'Unknown'}
                     </p>
                     <p className="text-xs text-gray-600 mb-1">
-                      <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {roll.fabric_color || 'Natural'}
+                      <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {
+                        roll.customer_color ||
+                        roll.fabric_color ||
+                        roll.finished_fabrics?.color ||
+                        'Natural'
+                      }
                     </p>
                     <p className="text-xs text-gray-600 mb-3">
                       <strong>Created:</strong> {new Date(roll.created_at).toLocaleDateString()}
