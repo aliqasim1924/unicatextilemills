@@ -565,6 +565,21 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
           // Don't throw - shipment exists, just without items
         } else {
           console.log(`Added ${shipmentItems.length} rolls to shipment`)
+
+          // Update roll status to 'dispatched' for all shipped rolls
+          const rollIds = shipmentItems.map(item => item.fabric_roll_id)
+          if (rollIds.length > 0) {
+            const { error: updateError } = await supabase
+              .from('fabric_rolls')
+              .update({
+                roll_status: 'dispatched',
+                updated_at: new Date().toISOString()
+              })
+              .in('id', rollIds)
+            if (updateError) {
+              console.error('Error updating roll status to dispatched:', updateError)
+            }
+          }
         }
       }
 

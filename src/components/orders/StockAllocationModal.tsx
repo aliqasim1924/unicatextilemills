@@ -101,36 +101,82 @@ export default function StockAllocationModal({
 
     try {
       setAllocatingOrderId(selectedOrder.id)
-      const newTotalAllocated = selectedOrder.quantity_allocated + allocationAmount
+      let allocationLeft = allocationAmount;
+      // 1. Fetch available rolls for this finished fabric and color (FIFO)
+      const { data: availableRolls, error: rollsError } = await supabase
+        .from('fabric_rolls')
+        .select('*')
+        .eq('fabric_id', selectedOrder.finished_fabric_id)
+        .eq('fabric_type', 'finished_fabric')
+        .eq('roll_status', 'available')
+        .gt('remaining_length', 0)
+        .eq('customer_color', selectedOrder.finished_fabrics?.color)
+        .order('created_at', { ascending: true });
+      if (rollsError) throw rollsError;
+      if (!availableRolls || availableRolls.length === 0) throw new Error('No available rolls found for this color');
+      // 2. Allocate rolls
+      for (const roll of availableRolls) {
+        if (allocationLeft <= 0) break;
+        const allocFromThisRoll = Math.min(roll.remaining_length, allocationLeft);
+        const newRemaining = roll.remaining_length - allocFromThisRoll;
+        const newStatus = newRemaining === 0 ? 'allocated' : 'partially_allocated';
+        const { error: rollUpdateError } = await supabase
+          .from('fabric_rolls')
+          .update({
+            remaining_length: newRemaining,
+            roll_status: newStatus,
+            customer_order_id: selectedOrder.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', roll.id);
+        if (rollUpdateError) {
+          // Optionally, keep a single error log for production
+          console.error('Error updating roll status during allocation:', rollUpdateError.message || rollUpdateError);
+        }
+        // Log stock movement for this roll
+        const { error: movementError } = await supabase
+          .from('stock_movements')
+          .insert({
+            fabric_type: 'finished_fabric',
+            fabric_id: selectedOrder.finished_fabric_id,
+            movement_type: 'allocation',
+            quantity: -allocFromThisRoll,
+            reference_id: selectedOrder.id,
+            reference_type: 'customer_order',
+            notes: `Quick Allocate: Roll ${roll.roll_number}`,
+            created_at: new Date().toISOString(),
+          });
+        if (movementError) {
+          // Optionally, keep a single error log for production
+          console.error('Error logging stock movement during allocation:', movementError.message || movementError);
+        }
+        allocationLeft -= allocFromThisRoll;
+      }
+      // 3. Update order allocation summary
+      const newTotalAllocated = selectedOrder.quantity_allocated + allocationAmount;
       const newStatus = newTotalAllocated >= selectedOrder.quantity_ordered 
         ? 'fully_allocated' 
-        : 'partially_allocated'
-
-      // Update order allocation
+        : 'partially_allocated';
       const { error: orderError } = await supabase
         .from('customer_orders')
         .update({
           quantity_allocated: newTotalAllocated,
           order_status: newStatus,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', selectedOrder.id)
-
-      if (orderError) throw orderError
-
-      // Update stock quantity
-      const newStockQuantity = (selectedOrder.finished_fabrics?.stock_quantity || 0) - allocationAmount
+        .eq('id', selectedOrder.id);
+      if (orderError) throw orderError;
+      // 4. Update finished fabric stock quantity
+      const newStockQuantity = (selectedOrder.finished_fabrics?.stock_quantity || 0) - allocationAmount;
       const { error: stockError } = await supabase
         .from('finished_fabrics')
         .update({
           stock_quantity: newStockQuantity,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', selectedOrder.finished_fabric_id)
-
-      if (stockError) throw stockError
-
-      // Create stock movement record
+        .eq('id', selectedOrder.finished_fabric_id);
+      if (stockError) throw stockError;
+      // 5. Create summary stock movement record
       const { error: movementError } = await supabase
         .from('stock_movements')
         .insert({
@@ -140,12 +186,10 @@ export default function StockAllocationModal({
           quantity: -allocationAmount,
           reference_id: selectedOrder.id,
           reference_type: 'customer_order',
-          notes: `Stock allocated to order ${selectedOrder.internal_order_number}`,
-          created_at: new Date().toISOString()
-        })
-
-      if (movementError) throw movementError
-
+          notes: `Stock allocated to order ${selectedOrder.internal_order_number} (Quick Allocate)` ,
+          created_at: new Date().toISOString(),
+        });
+      if (movementError) throw movementError;
       // Reset form and reload data
       setShowPinModal(false)
       setPin('')
@@ -153,7 +197,6 @@ export default function StockAllocationModal({
       setAllocationAmount(0)
       loadPendingOrders()
       onAllocationComplete()
-
     } catch (error) {
       console.error('Error processing allocation:', error)
       alert('Error processing allocation. Please try again.')

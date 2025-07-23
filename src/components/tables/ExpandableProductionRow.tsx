@@ -38,6 +38,7 @@ interface ProductionOrder {
   notes: string | null
   created_at: string
   updated_at: string
+  customer_color?: string
   // Related data
   customer_orders?: {
     internal_order_number: string
@@ -52,6 +53,7 @@ interface ProductionOrder {
   finished_fabrics?: {
     name: string
     stock_quantity: number
+    color?: string
   } | null
   linked_production_order?: {
     internal_order_number: string
@@ -217,6 +219,10 @@ export default function ExpandableProductionRow({
             {order.production_type === 'weaving' 
               ? order.base_fabrics?.name 
               : order.finished_fabrics?.name}
+          </div>
+          {/* Show Colour below material name */}
+          <div className="text-xs text-gray-700">
+            Colour: {order.customer_color || order.finished_fabrics?.color || 'N/A'}
           </div>
           <div className="text-sm text-gray-900">
             {order.quantity_required}m required

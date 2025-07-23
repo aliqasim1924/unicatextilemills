@@ -50,11 +50,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: 'Failed to fetch audit trail' })
     }
 
+    // Fetch all rolls supplied (dispatched) to this customer order
+    const { data: suppliedRolls, error: rollsError } = await supabase
+      .from('fabric_rolls')
+      .select('id, roll_number, roll_length, remaining_length, quality_grade, customer_color, production_batches(batch_number)')
+      .eq('customer_order_id', orderId)
+      .eq('roll_status', 'dispatched')
+
+    if (rollsError) {
+      console.error('Error fetching supplied rolls:', rollsError)
+      return res.status(500).json({ error: 'Failed to fetch supplied rolls' })
+    }
+
     // Note: Removed audit_generated entries to keep audit trail clean
 
     const auditData = {
       order,
       auditTrail: auditTrail || [],
+      suppliedRolls: suppliedRolls || [],
       generatedAt: new Date().toISOString(),
     }
 

@@ -407,39 +407,39 @@ export default function StockPage() {
 
   // Color-wise stock calculation based on actual fabric rolls
   const colorWiseStock = finishedFabricRolls.reduce((acc, roll) => {
-    const color = roll.customer_color || roll.finished_fabrics?.color || 'Natural'
-    const fabricName = roll.finished_fabrics?.name || 'Unknown Fabric'
-    const availableLength = roll.remaining_length || 0
-    
+    // Only include available rolls with remaining_length > 0
+    if (roll.roll_status !== 'available' || (roll.remaining_length || 0) <= 0) return acc;
+    const color = roll.customer_color || roll.finished_fabrics?.color || 'Natural';
+    const fabricName = roll.finished_fabrics?.name || 'Unknown Fabric';
+    const availableLength = roll.remaining_length || 0;
+
     if (!acc[color]) {
       acc[color] = {
         color,
         totalStock: 0,
         fabricBreakdown: {}
-      }
+      };
     }
-    
-    if (availableLength > 0) {
-      acc[color].totalStock += availableLength
-      
-      if (!acc[color].fabricBreakdown[fabricName]) {
-        acc[color].fabricBreakdown[fabricName] = {
-          name: fabricName,
-          totalStock: 0,
-          rollCount: 0
-        }
-      }
-      
-      acc[color].fabricBreakdown[fabricName].totalStock += availableLength
-      acc[color].fabricBreakdown[fabricName].rollCount += 1
+
+    acc[color].totalStock += availableLength;
+
+    if (!acc[color].fabricBreakdown[fabricName]) {
+      acc[color].fabricBreakdown[fabricName] = {
+        name: fabricName,
+        totalStock: 0,
+        rollCount: 0
+      };
     }
-    
-    return acc
-  }, {} as Record<string, { 
-    color: string; 
-    totalStock: number; 
-    fabricBreakdown: Record<string, { name: string; totalStock: number; rollCount: number }> 
-  }>)
+
+    acc[color].fabricBreakdown[fabricName].totalStock += availableLength;
+    acc[color].fabricBreakdown[fabricName].rollCount += 1;
+
+    return acc;
+  }, {} as Record<string, {
+    color: string;
+    totalStock: number;
+    fabricBreakdown: Record<string, { name: string; totalStock: number; rollCount: number }>;
+  }>);
 
   // Filter out colors with 0 stock and sort by total stock
   type ColorData = { 
@@ -451,13 +451,19 @@ export default function StockPage() {
     .filter((colorData: any): colorData is ColorData => colorData.totalStock > 0)
     .sort((a, b) => b.totalStock - a.totalStock)
 
-  // Calculate total stock for each finished fabric by summing all rolls
+  // Calculate total stock for each finished fabric by summing all available rolls
   const finishedFabricTotals = finishedFabrics.map(fabric => {
     const totalStock = finishedFabricRolls
-      .filter(roll => roll.fabric_id === fabric.id)
-      .reduce((sum, roll) => sum + (roll.remaining_length || 0), 0)
-    return { ...fabric, totalStock }
+      .filter(roll => roll.fabric_id === fabric.id && roll.roll_status === 'available' && (roll.remaining_length || 0) > 0)
+      .reduce((sum, roll) => sum + (roll.remaining_length || 0), 0);
+    return { ...fabric, totalStock };
   })
+
+  // Add a callback to refresh both stock and rolls after allocation
+  const handleAllocationComplete = () => {
+    loadStockData();
+    fetchFinishedFabricRolls();
+  };
 
   if (loading) {
     return (
@@ -1195,7 +1201,7 @@ export default function StockPage() {
         <StockAllocationModal
           isOpen={true}
           onClose={() => setSelectedFabric(null)}
-          onAllocationComplete={loadStockData}
+          onAllocationComplete={handleAllocationComplete}
         />
       )}
 
@@ -1204,7 +1210,7 @@ export default function StockPage() {
         <StockAllocationModal
           isOpen={showAllocationModal}
           onClose={() => setShowAllocationModal(false)}
-          onAllocationComplete={loadStockData}
+          onAllocationComplete={handleAllocationComplete}
         />
       )}
 
@@ -1212,10 +1218,7 @@ export default function StockPage() {
       <RollAllocationModal
         isOpen={showRollAllocationModal}
         onClose={() => setShowRollAllocationModal(false)}
-        onAllocationComplete={() => {
-          loadStockData()
-          fetchFinishedFabricRolls()
-        }}
+        onAllocationComplete={handleAllocationComplete}
       />
     </div>
   )

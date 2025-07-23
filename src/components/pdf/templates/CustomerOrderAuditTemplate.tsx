@@ -29,6 +29,15 @@ interface CustomerOrderAuditTemplateProps {
   order: CustomerOrder
   auditTrail: CustomerOrderAudit[]
   generatedAt: string
+  suppliedRolls?: Array<{
+    id: string
+    roll_number: string
+    roll_length: number
+    remaining_length: number
+    quality_grade: string
+    customer_color?: string | null
+    production_batches?: { batch_number?: string | null }
+  }>
 }
 
 const styles = StyleSheet.create({
@@ -212,7 +221,8 @@ const styles = StyleSheet.create({
 export default function CustomerOrderAuditTemplate({ 
   order, 
   auditTrail, 
-  generatedAt 
+  generatedAt, 
+  suppliedRolls = []
 }: CustomerOrderAuditTemplateProps) {
   
   const formatDate = (dateString: string) => {
@@ -297,6 +307,29 @@ export default function CustomerOrderAuditTemplate({
             <Text style={styles.infoValue}>{formatDate(order.due_date)}</Text>
           </View>
         </View>
+
+        {/* Supplied Rolls Section */}
+        {suppliedRolls.length > 0 && (
+          <View style={{ marginTop: 16, marginBottom: 16 }}>
+            <Text style={styles.sectionTitle}>SUPPLIED ROLLS (DISPATCHED TO CUSTOMER)</Text>
+            <View style={{ flexDirection: 'row', borderBottom: 1, borderColor: '#ccc', paddingBottom: 4 }}>
+              <Text style={{ width: '20%', fontWeight: 'bold' }}>Roll #</Text>
+              <Text style={{ width: '15%', fontWeight: 'bold' }}>Length</Text>
+              <Text style={{ width: '15%', fontWeight: 'bold' }}>Grade</Text>
+              <Text style={{ width: '20%', fontWeight: 'bold' }}>Color</Text>
+              <Text style={{ width: '20%', fontWeight: 'bold' }}>Batch</Text>
+            </View>
+            {suppliedRolls.map((roll) => (
+              <View key={roll.id} style={{ flexDirection: 'row', borderBottom: 0.5, borderColor: '#eee', paddingVertical: 2 }}>
+                <Text style={{ width: '20%' }}>{roll.roll_number}</Text>
+                <Text style={{ width: '15%' }}>{roll.roll_length}m</Text>
+                <Text style={{ width: '15%' }}>{roll.quality_grade}</Text>
+                <Text style={{ width: '20%' }}>{roll.customer_color || '-'}</Text>
+                <Text style={{ width: '20%' }}>{roll.production_batches?.batch_number || '-'}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={styles.auditTrailHeader}>
           <Text style={styles.sectionTitle}>COMPLETE AUDIT TRAIL</Text>

@@ -209,7 +209,7 @@ export default function RollAllocationModal({
         const newRemainingLength = roll.remaining_length - selectedRoll.allocatedLength
         const newStatus = newRemainingLength === 0 ? 'allocated' : 'partially_allocated'
 
-        await supabase
+        const { data: updatedRoll, error: rollUpdateError } = await supabase
           .from('fabric_rolls')
           .update({
             remaining_length: newRemainingLength,
@@ -218,9 +218,15 @@ export default function RollAllocationModal({
             updated_at: new Date().toISOString()
           })
           .eq('id', selectedRoll.rollId)
+          .select()
+          .single();
+        if (rollUpdateError) {
+          // Optionally, keep a single error log for production
+          console.error('Error updating roll status during allocation:', rollUpdateError.message || rollUpdateError);
+        }
 
         // Log allocation event
-        await supabase
+        const { error: movementError } = await supabase
           .from('stock_movements')
           .insert({
             fabric_type: 'finished_fabric',
@@ -232,6 +238,10 @@ export default function RollAllocationModal({
             notes: `Manual roll allocation: ${selectedRoll.rollNumber} (${selectedRoll.qualityGrade} grade)`,
             created_at: new Date().toISOString()
           })
+        if (movementError) {
+          console.error('Error logging stock movement during allocation:', movementError)
+          alert('Error logging stock movement during allocation. Please check logs.')
+        }
       }
 
       // Update customer order

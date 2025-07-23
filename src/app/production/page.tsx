@@ -40,6 +40,7 @@ interface ProductionOrder {
   notes: string | null
   created_at: string
   updated_at: string
+  customer_color?: string
   // Related data
   customer_orders?: {
     internal_order_number: string
@@ -54,6 +55,7 @@ interface ProductionOrder {
   finished_fabrics?: {
     name: string
     stock_quantity: number
+    color?: string
   } | null
 }
 
@@ -109,6 +111,7 @@ export default function ProductionPage() {
         .from('production_orders')
         .select(`
           *,
+          customer_color,
           customer_orders (
             internal_order_number,
             customers (
@@ -121,7 +124,8 @@ export default function ProductionPage() {
           ),
           finished_fabrics (
             name,
-            stock_quantity
+            stock_quantity,
+            color
           ),
           linked_production_order:linked_production_order_id (
             internal_order_number,
@@ -524,6 +528,40 @@ export default function ProductionPage() {
         const order = pendingOrders.find(o => o.id === orderId)
         if (!order) continue
 
+        let allocationLeft = allocation;
+        // Fetch available rolls for this finished fabric (FIFO)
+        const { data: availableRolls, error: rollsError } = await supabase
+          .from('fabric_rolls')
+          .select('*')
+          .eq('fabric_id', fabricId)
+          .eq('fabric_type', 'finished_fabric')
+          .eq('roll_status', 'available')
+          .gt('remaining_length', 0)
+          .order('created_at', { ascending: true });
+        if (rollsError) throw rollsError;
+        if (!availableRolls || availableRolls.length === 0) throw new Error('No available rolls found for allocation');
+        // Allocate rolls
+        for (const roll of availableRolls) {
+          if (allocationLeft <= 0) break;
+          const allocFromThisRoll = Math.min(roll.remaining_length, allocationLeft);
+          const newRemaining = roll.remaining_length - allocFromThisRoll;
+          const newStatus = newRemaining === 0 ? 'allocated' : 'partially_allocated';
+          const { error: rollUpdateError } = await supabase
+            .from('fabric_rolls')
+            .update({
+              remaining_length: newRemaining,
+              roll_status: newStatus,
+              customer_order_id: orderId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', roll.id);
+          if (rollUpdateError) {
+            // Optionally, keep a single error log for production
+            console.error('Error updating roll status during auto-allocation:', rollUpdateError.message || rollUpdateError);
+          }
+          allocationLeft -= allocFromThisRoll;
+        }
+
         const newTotalAllocated = (order.quantity_allocated || 0) + allocation
         const newStatus = newTotalAllocated >= order.quantity_ordered 
           ? 'fully_allocated' 
@@ -540,7 +578,7 @@ export default function ProductionPage() {
           .eq('id', orderId)
 
         // Record stock movement
-        await supabase.from('stock_movements').insert({
+        const { error: movementError } = await supabase.from('stock_movements').insert({
           fabric_type: 'finished_fabric',
           fabric_id: fabricId,
           movement_type: 'allocation',
@@ -550,6 +588,10 @@ export default function ProductionPage() {
           notes: `Auto-allocated after production completion to order ${order.internal_order_number}`,
           created_at: new Date().toISOString()
         })
+        if (movementError) {
+          // Optionally, keep a single error log for production
+          console.error('Error logging stock movement during auto-allocation:', movementError.message || movementError);
+        }
 
         // Log the allocation in customer order audit trail
         const allocationTime = new Date().toISOString()
@@ -1093,6 +1135,13 @@ export default function ProductionPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Status</label>
                   <p className="mt-1 text-sm text-gray-900 capitalize">{selectedOrder.production_status.replace('_', ' ')}</p>
+                </div>
+                {/* Add Colour field here */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Colour</label>
+                  <p className="mt-1 text-sm text-gray-900">
+                    {selectedOrder.customer_color || selectedOrder.finished_fabrics?.color || 'N/A'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Priority Level</label>

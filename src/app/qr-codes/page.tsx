@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import QRCodeDisplay from '@/components/ui/QRCodeDisplay'
 import { QrCodeIcon, EyeIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
@@ -78,10 +78,27 @@ export default function QRCodesPage() {
   const [groupByBatch, setGroupByBatch] = useState(true)
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'fabric_rolls' | 'loom_rolls' | 'all'>('all')
+  const subscriptionRef = useRef<any>(null);
 
   useEffect(() => {
-    loadAllRolls()
-  }, [])
+    loadAllRolls();
+    // Subscribe to real-time changes in fabric_rolls
+    const channel = supabase.channel('fabric_rolls_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'fabric_rolls' },
+        () => {
+          loadAllRolls();
+        }
+      )
+      .subscribe();
+    subscriptionRef.current = channel;
+    return () => {
+      if (subscriptionRef.current) {
+        supabase.removeChannel(subscriptionRef.current);
+      }
+    };
+  }, []);
 
   const loadAllRolls = async () => {
     try {
