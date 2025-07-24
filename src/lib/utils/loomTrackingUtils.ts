@@ -553,7 +553,7 @@ export const loomTrackingUtils = {
           throw new Error(`Failed to create loom roll: ${rollError.message}`)
         }
 
-        // Generate API-based QR code with the roll ID
+        // Generate API-based QR code with the loom roll ID
         const qrData = loomTrackingUtils.generateApiQRData(loomRoll.id)
 
         // Update the loom roll with the QR code
@@ -570,6 +570,30 @@ export const loomTrackingUtils = {
           loomNumber: loomDetail.loomNumber,
           qrCode: JSON.stringify(qrData)
         })
+
+        // --- NEW: Also insert into fabric_rolls for QR Codes page ---
+        const { data: fabricRoll, error: fabricRollError } = await supabase
+          .from('fabric_rolls')
+          .insert({
+            roll_number: rollNumber,
+            batch_id: batch.id,
+            fabric_type: 'base_fabric',
+            fabric_id: fabricId,
+            roll_length: rollDetail.rollLength,
+            remaining_length: rollDetail.rollLength,
+            quality_grade: rollDetail.qualityGrade,
+            roll_status: 'available',
+            qr_code: JSON.stringify(qrData),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            notes: loomDetail.qualityNotes || null
+          })
+          .select()
+          .single()
+        if (fabricRollError) {
+          throw new Error(`Failed to create base fabric roll in fabric_rolls: ${fabricRollError.message}`)
+        }
+        // --- END NEW ---
       }
     }
 
@@ -1356,11 +1380,44 @@ export const loomTrackingUtils = {
       await supabase
         .from('loom_rolls')
         .update({
-          roll_status: 'allocated_for_coating',
+          roll_status: 'allocated_coating',
           coating_production_order_id: coatingProductionOrderId,
           updated_at: new Date().toISOString(),
+          archived: true,
         })
         .eq('id', rollId)
+
+      // Also update the corresponding fabric_rolls record
+      // Find the roll_number for this loom roll
+      const { data: loomRollData } = await supabase
+        .from('loom_rolls')
+        .select('roll_number')
+        .eq('id', rollId)
+        .single()
+      console.log('[DEBUG] Processing loomRollId:', rollId, '-> roll_number:', loomRollData?.roll_number)
+      if (loomRollData?.roll_number) {
+        // Debug: Select the fabric_rolls record before update
+        const { data: fabricRoll, error: selectError } = await supabase
+          .from('fabric_rolls')
+          .select('*')
+          .eq('roll_number', loomRollData.roll_number)
+          .single()
+        console.log('[DEBUG] fabric_rolls select for roll_number:', loomRollData.roll_number, 'Result:', fabricRoll, 'Error:', selectError)
+        if (!fabricRoll) {
+          // Log all roll_numbers for comparison
+          const { data: allRolls } = await supabase
+            .from('fabric_rolls')
+            .select('roll_number')
+          console.log('[DEBUG] All fabric_rolls roll_numbers:', allRolls?.map(r => r.roll_number))
+        }
+        // Try minimal update
+        const { data: minUpdateResult, error: minUpdateError } = await supabase
+          .from('fabric_rolls')
+          .update({ archived: true })
+          .eq('roll_number', loomRollData.roll_number)
+        console.log('[DEBUG] Minimal update fabric_rolls for roll_number:', loomRollData.roll_number, 'Result:', minUpdateResult, 'Error:', minUpdateError)
+        // ... existing code for full update ...
+      }
 
       // Insert record into coating_roll_inputs table
       const { error: insertError } = await supabase

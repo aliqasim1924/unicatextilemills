@@ -280,6 +280,44 @@ export interface Database {
           created_at?: string | null
         }
       }
+      loom_rolls: {
+        Row: {
+          id: string
+          name: string
+          gsm: number
+          width_meters: number
+          color: string | null
+          stock_quantity: number | null
+          minimum_stock: number | null
+          archived: boolean;
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          gsm: number
+          width_meters: number
+          color?: string | null
+          stock_quantity?: number | null
+          minimum_stock?: number | null
+          archived?: boolean;
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          gsm?: number
+          width_meters?: number
+          color?: string | null
+          stock_quantity?: number | null
+          minimum_stock?: number | null
+          archived?: boolean;
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
     }
     Views: {
       [_ in never]: never

@@ -64,6 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           )
         )
       `)
+      .eq('archived', false)
 
     if (rollsError) {
       console.error('Error loading fabric rolls:', rollsError)

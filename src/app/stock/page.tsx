@@ -126,157 +126,46 @@ export default function StockPage() {
     }
   }
 
-  // Function to fetch finished fabric rolls
+  // Function to fetch finished and base fabric rolls
   const fetchFinishedFabricRolls = async () => {
     setLoadingRolls(true)
     try {
-      // Start with a simple query to check if table exists and has basic structure
-      const { data, error } = await supabase
+      // Only fetch non-archived, available finished fabric rolls
+      const { data: finishedData, error: finishedError } = await supabase
         .from('fabric_rolls')
         .select('*')
+        .eq('archived', false)
+        .eq('fabric_type', 'finished_fabric')
         .order('created_at', { ascending: false })
-      
-      if (error) {
-        console.error('Error fetching finished fabric rolls:', error)
-        console.error('Error details:', JSON.stringify(error, null, 2))
-        // Set empty array if table doesn't exist or has no data
+      if (finishedError) {
         setFinishedFabricRolls([])
-        return
-      }
-      
-      console.log('Fabric rolls data:', data)
-      console.log('Number of fabric rolls:', data?.length || 0)
-      if (data && data.length > 0) {
-        console.log('Sample fabric roll structure:', Object.keys(data[0]))
-      }
-      
-      // If we have data, try to enrich it with related information
-      if (data && data.length > 0) {
-        try {
-          const enrichedData = await Promise.all(
-            data.map(async (roll) => {
-              let enrichedRoll = { ...roll }
-              
-              // Try to get finished fabric info if fabric_id exists
-              if (roll.fabric_id && roll.fabric_type === 'finished_fabric') {
-                const { data: fabricData } = await supabase
-                  .from('finished_fabrics')
-                  .select('name, color')
-                  .eq('id', roll.fabric_id)
-                  .single()
-                
-                if (fabricData) {
-                  enrichedRoll.finished_fabrics = fabricData
-                }
-              }
-              
-              // Try to get production batch info if batch_id exists
-              if (roll.batch_id) {
-                const { data: batchData } = await supabase
-                  .from('production_batches')
-                  .select(`
-                    batch_number,
-                    production_orders(
-                      internal_order_number,
-                      customer_orders(
-                        internal_order_number,
-                        customers(name)
-                      )
-                    )
-                  `)
-                  .eq('id', roll.batch_id)
-                  .single()
-                
-                if (batchData) {
-                  enrichedRoll.production_batches = batchData
-                }
-              }
-              
-              return enrichedRoll
-            })
-          )
-          
-          setFinishedFabricRolls(enrichedData)
-        } catch (enrichError) {
-          console.warn('Error enriching fabric rolls data:', enrichError)
-          // Fall back to basic data if enrichment fails
-          setFinishedFabricRolls(data)
-        }
       } else {
-        setFinishedFabricRolls([])
+        setFinishedFabricRolls(finishedData || [])
       }
     } catch (error) {
-      console.error('Error fetching finished fabric rolls:', error)
-      console.error('Error details:', JSON.stringify(error, null, 2))
       setFinishedFabricRolls([])
     } finally {
       setLoadingRolls(false)
     }
   }
 
-  // Function to fetch base fabric rolls (loom rolls)
+  // Function to fetch base fabric rolls (from fabric_rolls, not loom_rolls)
   const fetchBaseFabricRolls = async () => {
     setLoadingBaseRolls(true)
     try {
-      // Start with a simple query to check if loom_rolls table exists
-      const { data, error } = await supabase
-        .from('loom_rolls')
+      // Only fetch non-archived base fabric rolls
+      const { data: baseData, error: baseError } = await supabase
+        .from('fabric_rolls')
         .select('*')
+        .eq('archived', false)
+        .eq('fabric_type', 'base_fabric')
         .order('created_at', { ascending: false })
-      
-      if (error) {
-        console.error('Error fetching base fabric rolls:', error)
-        // Set empty array if table doesn't exist or has no data
+      if (baseError) {
         setBaseFabricRolls([])
-        return
-      }
-      
-      // If we have data, try to enrich it with related information
-      if (data && data.length > 0) {
-        try {
-          const enrichedData = await Promise.all(
-            data.map(async (roll) => {
-              let enrichedRoll = { ...roll }
-              
-              // Try to get loom production details if loom_production_detail_id exists
-              if (roll.loom_production_detail_id) {
-                const { data: loomData } = await supabase
-                  .from('loom_production_details')
-                  .select(`
-                    production_orders(
-                      internal_order_number,
-                      base_fabric_id,
-                      base_fabrics(name, color),
-                      customer_orders(
-                        internal_order_number,
-                        customers(name)
-                      )
-                    ),
-                    looms(loom_number, loom_name)
-                  `)
-                  .eq('id', roll.loom_production_detail_id)
-                  .single()
-                
-                if (loomData) {
-                  enrichedRoll.loom_production_details = loomData
-                }
-              }
-              
-              return enrichedRoll
-            })
-          )
-          
-          setBaseFabricRolls(enrichedData)
-        } catch (enrichError) {
-          console.warn('Error enriching loom rolls data:', enrichError)
-          // Fall back to basic data if enrichment fails
-          setBaseFabricRolls(data)
-        }
       } else {
-        setBaseFabricRolls([])
+        setBaseFabricRolls(baseData || [])
       }
     } catch (error) {
-      console.error('Error fetching base fabric rolls:', error)
       setBaseFabricRolls([])
     } finally {
       setLoadingBaseRolls(false)
@@ -459,10 +348,11 @@ export default function StockPage() {
     return { ...fabric, totalStock };
   })
 
-  // Add a callback to refresh both stock and rolls after allocation
+  // After allocation, refresh both finished and base fabric rolls
   const handleAllocationComplete = () => {
     loadStockData();
     fetchFinishedFabricRolls();
+    fetchBaseFabricRolls();
   };
 
   if (loading) {

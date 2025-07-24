@@ -573,6 +573,7 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
               .from('fabric_rolls')
               .update({
                 roll_status: 'dispatched',
+                archived: true,
                 updated_at: new Date().toISOString()
               })
               .in('id', rollIds)

@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS fabric_rolls (
     remaining_length DECIMAL(8,2) NOT NULL,
     roll_status VARCHAR(20) DEFAULT 'available' CHECK (roll_status IN ('available', 'allocated', 'used', 'damaged', 'quality_hold')),
     qr_code TEXT NOT NULL, -- JSON string containing QR code data
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
     location VARCHAR(100) DEFAULT 'warehouse',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),

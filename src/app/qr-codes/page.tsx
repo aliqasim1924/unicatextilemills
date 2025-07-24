@@ -41,6 +41,7 @@ interface FabricRoll {
     name: string
     color: string
   } | null
+  archived?: boolean;
   
   // Enhanced QR context
   qr_data?: {
@@ -103,10 +104,9 @@ export default function QRCodesPage() {
   }, []);
 
   const loadAllRolls = async () => {
+    setLoading(true)
     try {
-      setLoading(true)
-      
-      // Get fabric rolls with production batches
+      // Fetch fabric rolls, excluding archived
       const { data: rollsData, error: rollsError } = await supabase
         .from('fabric_rolls')
         .select(`
@@ -126,112 +126,15 @@ export default function QRCodesPage() {
             )
           )
         `)
-        .not('roll_status', 'in', '(shipped,delivered)')
+        .eq('archived', false)
         .order('created_at', { ascending: false })
-
       if (rollsError) {
-        console.error('Error loading fabric rolls:', rollsError)
-        return
+        setFabricRolls([])
+      } else {
+        setFabricRolls(rollsData || [])
       }
-
-      // Get loom rolls with related data
-      const { data: loomRollsData, error: loomRollsError } = await supabase
-        .from('loom_rolls')
-        .select(`
-          *,
-          loom_production_details!inner (
-            loom_id,
-            production_order_id,
-            looms (loom_number),
-            production_orders (
-              internal_order_number,
-              production_type,
-              customer_order_id,
-              customer_orders (
-                internal_order_number,
-                customers (name)
-              )
-            )
-          )
-        `)
-        .order('created_at', { ascending: false })
-
-      if (loomRollsError) {
-        console.error('Error loading loom rolls:', loomRollsError)
-        return
-      }
-
-      // Process fabric rolls and parse QR data
-      const processedFabricRolls = await Promise.all(
-        (rollsData || []).map(async (roll) => {
-          let fabricName = 'Unknown Fabric'
-          
-          let fabricColor = 'Natural'
-          
-          if (roll.fabric_type === 'base_fabric' && roll.fabric_id) {
-            const { data: fabric } = await supabase
-              .from('base_fabrics')
-              .select('name')
-              .eq('id', roll.fabric_id)
-              .single()
-            fabricName = fabric?.name || 'Unknown Base Fabric'
-          } else if (roll.fabric_type === 'finished_fabric' && roll.fabric_id) {
-            const { data: fabric } = await supabase
-              .from('finished_fabrics')
-              .select('name, color')
-              .eq('id', roll.fabric_id)
-              .single()
-            fabricName = fabric?.name || 'Unknown Finished Fabric'
-            fabricColor = fabric?.color || 'Natural'
-          }
-
-          // Parse QR code data to extract production purpose and customer info
-          let qrData = null
-          try {
-            qrData = JSON.parse(roll.qr_code)
-          } catch (e) {
-            console.warn('Failed to parse QR code for roll:', roll.roll_number)
-          }
-
-          return {
-            ...roll,
-            fabric_name: fabricName,
-            fabric_color: fabricColor,
-            qr_data: qrData // Add parsed QR data to the roll object
-          }
-        })
-      )
-
-      // Process loom rolls and parse QR data
-      const processedLoomRolls: LoomRoll[] = (loomRollsData || []).map(roll => {
-        // Parse QR code data for loom rolls too
-        let qrData = null
-        try {
-          qrData = JSON.parse(roll.qr_code)
-        } catch (e) {
-          console.warn('Failed to parse QR code for loom roll:', roll.roll_number)
-        }
-
-        return {
-          id: roll.id,
-          roll_number: roll.roll_number,
-          roll_length: roll.roll_length,
-          quality_grade: roll.quality_grade,
-          qr_code: roll.qr_code,
-          created_at: roll.created_at,
-          loom_number: roll.loom_production_details?.looms?.loom_number || 'Unknown',
-          batch_number: roll.loom_production_details?.production_orders?.internal_order_number || 'Unknown',
-          production_type: roll.loom_production_details?.production_orders?.production_type || 'weaving',
-          fabric_name: 'Base Fabric (Weaved)',
-          roll_status: roll.roll_status || 'available',
-          qr_data: qrData // Add parsed QR data to the loom roll object
-        }
-      })
-
-      setFabricRolls(processedFabricRolls)
-      setLoomRolls(processedLoomRolls)
     } catch (error) {
-      console.error('Error loading rolls:', error)
+      setFabricRolls([])
     } finally {
       setLoading(false)
     }

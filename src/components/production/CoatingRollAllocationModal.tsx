@@ -24,6 +24,7 @@ interface CoatingRollAllocationModalProps {
       name: string
     } | null
     linked_production_order_id?: string | null
+    batch_id?: string | null // Added batch_id to the interface
   }
   onAllocationComplete: () => void
 }
@@ -184,6 +185,16 @@ export default function CoatingRollAllocationModal({
           updated_at: new Date().toISOString()
         })
         .eq('id', productionOrder.id)
+
+      // Archive base-fabric rolls for this batch by calling the new API
+      // Assume productionOrder has a batch_id or fetch it if needed
+      if (productionOrder.batch_id) {
+        await fetch('/api/production/coating-start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productionOrderId: productionOrder.id, batchId: productionOrder.batch_id })
+        })
+      }
 
       console.log('Roll allocation completed successfully:', {
         productionOrder: productionOrder.internal_order_number,

@@ -39,6 +39,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ message: 'Roll not found' })
     }
 
+    // When updating roll status to dispatched, also set archived: true
+    await supabase
+      .from('fabric_rolls')
+      .update({ roll_status: 'dispatched', archived: true })
+      .eq('id', roll.id);
+
     // Get fabric name and color based on type
     let fabricName = 'Unknown Fabric'
     let fabricColor = 'Natural'
