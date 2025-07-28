@@ -12,21 +12,24 @@ import {
 } from '@heroicons/react/24/outline'
 import QRCodeDisplay from '@/components/ui/QRCodeDisplay'
 
+interface FabricRoll {
+  roll_number: string
+  roll_length: number
+  qr_code: string
+  fabric_type: string
+  fabric_name?: string
+  production_batches?: {
+    batch_number: string
+    production_type: string
+  }
+  parsed_qr_code?: any // Add this line for parsed QR code JSON
+}
+
 interface ShipmentItem {
   id: string
   fabric_roll_id: string
   quantity_shipped: number
-  fabric_rolls: {
-    roll_number: string
-    roll_length: number
-    qr_code: string
-    fabric_type: string
-    fabric_name?: string
-    production_batches?: {
-      batch_number: string
-      production_type: string
-    }
-  }
+  fabric_rolls: FabricRoll | null
 }
 
 interface Shipment {
@@ -40,7 +43,6 @@ interface Shipment {
   notes: string | null
   created_at: string
   updated_at: string
-  is_mock?: boolean // Flag for orders shown as mock shipments
   // Related data
   customer_orders?: {
     internal_order_number: string
@@ -51,6 +53,12 @@ interface Shipment {
     }
   }
   shipment_items?: ShipmentItem[]
+  qr_codes?: {
+    id: string
+    code_data: string
+    status: string
+    archived: boolean
+  }[]
 }
 
 export default function ShipmentsPage() {
@@ -67,8 +75,7 @@ export default function ShipmentsPage() {
   const loadShipments = async () => {
     try {
       setLoading(true)
-      
-      // Load existing shipments
+      // Load existing shipments with QR codes for each roll
       const { data: shipments, error: shipmentsError } = await supabase
         .from('shipments')
         .select(`
@@ -90,7 +97,7 @@ export default function ShipmentsPage() {
               roll_length,
               qr_code,
               fabric_type,
-              production_batches (
+              production_batches!batch_id (
                 batch_number,
                 production_type
               )
@@ -98,109 +105,27 @@ export default function ShipmentsPage() {
           )
         `)
         .order('shipped_date', { ascending: false })
-
       if (shipmentsError) {
         console.error('Error loading shipments:', shipmentsError)
         return
       }
-
-      // Load orders that are ready for dispatch or dispatched but don't have shipment records
-      const { data: dispatchOrders, error: ordersError } = await supabase
-        .from('customer_orders')
-        .select(`
-          *,
-          customers (
-            name,
-            email,
-            phone
-          ),
-          finished_fabrics (
-            name
-          )
-        `)
-        .in('order_status', ['ready_for_dispatch', 'dispatched'])
-        .order('created_at', { ascending: false })
-
-      if (ordersError) {
-        console.error('Error loading dispatch orders:', ordersError)
-        return
-      }
-
-      // Filter out orders that already have shipment records
-      const existingShipmentOrderIds = new Set(shipments?.map(s => s.customer_order_id) || [])
-      const ordersWithoutShipments = dispatchOrders?.filter(order => 
-        !existingShipmentOrderIds.has(order.id)
-      ) || []
-
-      // Convert orders to shipment-like format
-      const mockShipments = ordersWithoutShipments.map(order => ({
-        id: `mock-${order.id}`,
-        shipment_number: order.order_status === 'ready_for_dispatch' ? 'PENDING' : 'DISPATCHED',
-        customer_order_id: order.id,
-        shipped_date: order.dispatch_date || order.created_at,
-        delivery_date: null,
-        shipment_status: order.order_status === 'ready_for_dispatch' ? 'preparing' : 'shipped',
-        tracking_number: order.gate_pass_number || null,
-        notes: order.dispatch_notes || 'Order ready for dispatch',
-        created_at: order.created_at,
-        updated_at: order.updated_at,
-        customer_orders: {
-          internal_order_number: order.internal_order_number,
-          customers: order.customers
-        },
-        shipment_items: [], // No items for mock shipments
-        is_mock: true // Flag to identify mock shipments
+      // Parse QR code JSON for each roll in shipment_items
+      const enrichedShipments = (shipments || []).map(shipment => ({
+        ...shipment,
+        shipment_items: (shipment.shipment_items || []).map((item: ShipmentItem) => ({
+          ...item,
+          fabric_rolls: item.fabric_rolls ? {
+            ...item.fabric_rolls,
+            parsed_qr_code: (() => {
+              try {
+                return JSON.parse(item.fabric_rolls.qr_code || '{}')
+              } catch {
+                return null
+              }
+            })()
+          } : null
+        }))
       }))
-
-      // Combine real shipments with mock shipments
-      const allShipments = [...(shipments || []), ...mockShipments]
-
-      // Enrich with fabric names for real shipments only
-      const enrichedShipments = await Promise.all(
-        allShipments.map(async (shipment) => {
-          if (shipment.is_mock || !shipment.shipment_items) {
-            return shipment
-          }
-
-          if (shipment.shipment_items) {
-            const enrichedItems = await Promise.all(
-              shipment.shipment_items.map(async (item: ShipmentItem) => {
-                let fabricName = ''
-                if (item.fabric_rolls) {
-                  if (item.fabric_rolls.fabric_type === 'base_fabric') {
-                    const { data: fabricData } = await supabase
-                      .from('base_fabrics')
-                      .select('name')
-                      .eq('id', item.fabric_roll_id)
-                      .single()
-                    fabricName = fabricData?.name || 'Unknown Base Fabric'
-                  } else if (item.fabric_rolls.fabric_type === 'finished_fabric') {
-                    const { data: fabricData } = await supabase
-                      .from('finished_fabrics')
-                      .select('name')
-                      .eq('id', item.fabric_roll_id)
-                      .single()
-                    fabricName = fabricData?.name || 'Unknown Finished Fabric'
-                  }
-                }
-                return {
-                  ...item,
-                  fabric_rolls: {
-                    ...item.fabric_rolls,
-                    fabric_name: fabricName
-                  }
-                }
-              })
-            )
-            return {
-              ...shipment,
-              shipment_items: enrichedItems
-            }
-          }
-          return shipment
-        })
-      )
-
       setShipments(enrichedShipments)
     } catch (error) {
       console.error('Error loading shipments:', error)
@@ -303,7 +228,7 @@ export default function ShipmentsPage() {
             <div>
               <p className="text-sm text-gray-600">Total Rolls</p>
               <p className="text-2xl font-bold text-gray-900">
-                {shipments.reduce((sum, s) => sum + (s.is_mock ? 0 : (s.shipment_items?.length || 0)), 0)}
+                {shipments.reduce((sum, s) => sum + (s.shipment_items?.length || 0), 0)}
               </p>
             </div>
             <QrCodeIcon className="h-8 w-8 text-gray-600" />
@@ -356,26 +281,16 @@ export default function ShipmentsPage() {
         ) : (
           filteredShipments.map((shipment) => (
             <div key={shipment.id} className="bg-white rounded-lg shadow border border-gray-200">
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="font-semibold text-gray-900 text-lg mb-2">
-                      {shipment.shipment_number}
-                    </h3>
-                    
-                    <div className="flex items-center gap-2 mb-3">
+              <div className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="font-semibold text-gray-900 text-lg">
+                        {shipment.shipment_number}
+                      </h3>
                       <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(shipment.shipment_status)}`}>
                         {shipment.shipment_status}
                       </span>
-                      {shipment.is_mock ? (
-                        <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800">
-                          {shipment.shipment_status === 'preparing' ? 'Awaiting Shipment' : 'Dispatch Pending'}
-                        </span>
-                      ) : (
-                        <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800">
-                          {shipment.shipment_items?.length || 0} roll{(shipment.shipment_items?.length || 0) !== 1 ? 's' : ''}
-                        </span>
-                      )}
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
@@ -393,22 +308,23 @@ export default function ShipmentsPage() {
                         {shipment.tracking_number && (
                           <p><strong>Tracking:</strong> {shipment.tracking_number}</p>
                         )}
+                        <p><strong>Items:</strong> {shipment.shipment_items?.length || 0} rolls</p>
                       </div>
                     </div>
                   </div>
                   
                   <button
                     onClick={() => toggleShipmentExpansion(shipment.id)}
-                    className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors"
+                    className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors ml-4"
                   >
                     {expandedShipments.has(shipment.id) ? (
                       <>
-                        <span>{shipment.is_mock ? 'Hide Details' : 'Hide Items'}</span>
+                        <span>Hide Items</span>
                         <ChevronDownIcon className="ml-2 h-4 w-4" />
                       </>
                     ) : (
                       <>
-                        <span>{shipment.is_mock ? 'Show Details' : 'Show Items'}</span>
+                        <span>Show Items</span>
                         <ChevronRightIcon className="ml-2 h-4 w-4" />
                       </>
                     )}
@@ -419,87 +335,63 @@ export default function ShipmentsPage() {
               {/* Expandable Items Section */}
               {expandedShipments.has(shipment.id) && (
                 <div className="border-t border-gray-200 p-6 bg-gray-50">
-                  {shipment.is_mock ? (
-                    <div className="text-center py-8">
-                      <div className="mb-4">
-                        <TruckIcon className="h-12 w-12 text-gray-400 mx-auto" />
-                      </div>
-                      <h4 className="text-lg font-medium text-gray-900 mb-2">
-                        {shipment.shipment_status === 'preparing' ? 'Ready for Dispatch' : 'Dispatched'}
-                      </h4>
-                      <p className="text-gray-600 mb-4">
-                        {shipment.shipment_status === 'preparing' 
-                          ? 'This order is ready for dispatch. Create a shipment record to track fabric rolls.'
-                          : 'This order has been dispatched. Shipment details will be available once processed.'}
-                      </p>
-                      <div className="space-y-2 text-sm text-gray-700">
-                        <p><strong>Order:</strong> {shipment.customer_orders?.internal_order_number}</p>
-                        <p><strong>Customer:</strong> {shipment.customer_orders?.customers?.name}</p>
-                        {shipment.tracking_number && (
-                          <p><strong>Gate Pass:</strong> {shipment.tracking_number}</p>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {shipment.shipment_items?.map((item) => (
-                        <div key={item.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                          <div className="mb-4">
-                            <h4 className="font-semibold text-gray-900 text-sm mb-1">
-                              {item.fabric_rolls?.roll_number}
-                            </h4>
-                            
-                            <div className="space-y-1 text-xs text-gray-600">
-                              <p><strong>Fabric:</strong> {item.fabric_rolls?.fabric_name}</p>
-                              <p><strong>Batch:</strong> {item.fabric_rolls?.production_batches?.batch_number}</p>
-                              <p><strong>Type:</strong> {item.fabric_rolls?.production_batches?.production_type}</p>
-                              <p><strong>Length:</strong> {item.fabric_rolls?.roll_length}m</p>
-                            </div>
-                          </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {shipment.shipment_items?.map((item) => (
+                      <div key={item.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                        <div className="mb-4">
+                          <h4 className="font-semibold text-gray-900 text-sm mb-1">
+                            {item.fabric_rolls?.roll_number}
+                          </h4>
                           
-                          {/* QR Code */}
-                          <div className="flex items-center justify-center mb-4">
-                            <QRCodeDisplay 
-                              qrData={item.fabric_rolls?.qr_code || ''} 
-                              size={100} 
-                              showData={false} 
-                            />
-                          </div>
-                          
-                          <div className="flex space-x-2">
-                            <button
-                              onClick={() => {
-                                try {
-                                  const qrData = JSON.parse(item.fabric_rolls?.qr_code || '{}')
-                                  const downloadUrl = qrData.url
-                                  if (downloadUrl) {
-                                    window.open(downloadUrl, '_blank')
-                                  }
-                                } catch (e) {
-                                  console.error('Failed to parse QR code:', e)
-                                }
-                              }}
-                              className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
-                            >
-                              <span>📄</span>
-                              Download
-                            </button>
-                            
-                            <button
-                              onClick={() => {
-                                // Details functionality not implemented yet
-                                console.log('Details for shipment:', shipment.id)
-                              }}
-                              className="flex-1 px-3 py-2 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center gap-1"
-                            >
-                              <EyeIcon className="h-3 w-3" />
-                              Details
-                            </button>
+                          <div className="space-y-1 text-xs text-gray-600">
+                            <p><strong>Fabric:</strong> {item.fabric_rolls?.fabric_name}</p>
+                            <p><strong>Batch:</strong> {item.fabric_rolls?.production_batches?.batch_number}</p>
+                            <p><strong>Type:</strong> {item.fabric_rolls?.production_batches?.production_type}</p>
+                            <p><strong>Length:</strong> {item.fabric_rolls?.roll_length}m</p>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        
+                        {/* QR Code */}
+                        <div className="flex items-center justify-center mb-4">
+                          <QRCodeDisplay 
+                            qrData={item.fabric_rolls?.qr_code || ''} 
+                            size={100} 
+                            showData={false} 
+                          />
+                        </div>
+                        
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => {
+                              try {
+                                const qrData = JSON.parse(item.fabric_rolls?.qr_code || '{}')
+                                const downloadUrl = qrData.url
+                                if (downloadUrl) {
+                                  window.open(downloadUrl, '_blank')
+                                }
+                              } catch (e) {
+                                console.error('Failed to parse QR code:', e)
+                              }
+                            }}
+                            className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <span>📄</span>
+                            Download
+                          </button>
+                          
+                          <button
+                            onClick={() => {
+                              // Details functionality not implemented yet
+                            }}
+                            className="flex-1 px-3 py-2 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <EyeIcon className="h-3 w-3" />
+                            Details
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

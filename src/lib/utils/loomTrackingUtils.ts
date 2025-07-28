@@ -974,9 +974,6 @@ export const loomTrackingUtils = {
       throw new Error(`Failed to get production order: ${orderError.message}`)
     }
 
-    console.log('Production order customer_color:', productionOrder.customer_color)
-    console.log('Production order customer_order_item_id:', productionOrder.customer_order_item_id)
-
     const fabricId = productionOrder?.finished_fabric_id
     if (!fabricId) {
       throw new Error('No finished fabric ID found in production order')
@@ -1394,28 +1391,12 @@ export const loomTrackingUtils = {
         .select('roll_number')
         .eq('id', rollId)
         .single()
-      console.log('[DEBUG] Processing loomRollId:', rollId, '-> roll_number:', loomRollData?.roll_number)
       if (loomRollData?.roll_number) {
-        // Debug: Select the fabric_rolls record before update
-        const { data: fabricRoll, error: selectError } = await supabase
-          .from('fabric_rolls')
-          .select('*')
-          .eq('roll_number', loomRollData.roll_number)
-          .single()
-        console.log('[DEBUG] fabric_rolls select for roll_number:', loomRollData.roll_number, 'Result:', fabricRoll, 'Error:', selectError)
-        if (!fabricRoll) {
-          // Log all roll_numbers for comparison
-          const { data: allRolls } = await supabase
-            .from('fabric_rolls')
-            .select('roll_number')
-          console.log('[DEBUG] All fabric_rolls roll_numbers:', allRolls?.map(r => r.roll_number))
-        }
         // Try minimal update
         const { data: minUpdateResult, error: minUpdateError } = await supabase
           .from('fabric_rolls')
           .update({ archived: true })
           .eq('roll_number', loomRollData.roll_number)
-        console.log('[DEBUG] Minimal update fabric_rolls for roll_number:', loomRollData.roll_number, 'Result:', minUpdateResult, 'Error:', minUpdateError)
         // ... existing code for full update ...
       }
 

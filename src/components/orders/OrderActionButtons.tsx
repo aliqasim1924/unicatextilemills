@@ -466,13 +466,26 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
       // Create shipment if this is a dispatch action
       if (pendingAction.action === 'dispatch') {
         try {
-          await createShipmentForOrder(order.id, dispatchData)
-        } catch (shipmentError) {
-          console.error('Error creating shipment:', shipmentError)
-          // Continue with order update even if shipment creation fails
-          // The order will still be marked as dispatched
-        }
-      }
+                // Call the new API route instead of direct Supabase logic
+                const response = await fetch('/api/shipments', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ orderId: order.id, dispatchData })
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                  throw new Error(result.error || 'Failed to create shipment');
+                }
+                
+              } catch (shipmentError: any) {
+                console.error('Error creating shipment:', shipmentError);
+                alert(`Warning: Order was dispatched but shipment creation failed: ${shipmentError.message || 'Unknown error'}`);
+                // Continue with order update even if shipment creation fails
+                // The order will still be marked as dispatched
+              }
+            }
 
       // Log comprehensive audit trail entries
       await logDetailedAuditEntry(pendingAction.action, order.order_status, pendingAction.newStatus)
@@ -486,108 +499,6 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
       alert('Failed to update order. Please try again.')
     } finally {
       setUpdating(false)
-    }
-  }
-
-  const createShipmentForOrder = async (orderId: string, dispatchInfo: typeof dispatchData) => {
-    try {
-      // Create the shipment record
-      const { data: shipment, error: shipmentError } = await supabase
-        .from('shipments')
-        .insert({
-          customer_order_id: orderId,
-          shipped_date: dispatchInfo.dispatch_date,
-          shipment_status: 'shipped',
-          tracking_number: dispatchInfo.gate_pass_number, // Use gate pass as tracking number
-          notes: `Dispatched with Invoice: ${dispatchInfo.invoice_number}, Gate Pass: ${dispatchInfo.gate_pass_number}. Notes: ${dispatchInfo.dispatch_notes || 'None'}`
-        })
-        .select()
-        .single()
-
-      if (shipmentError) {
-        console.error('Error creating shipment:', shipmentError)
-        throw new Error(`Failed to create shipment: ${shipmentError.message}`)
-      }
-
-      // Get rolls that belong to this order's fabric type and are ready to be shipped
-      const { data: orderDetails, error: orderDetailsError } = await supabase
-        .from('customer_orders')
-        .select('finished_fabric_id, quantity_allocated')
-        .eq('id', orderId)
-        .single()
-
-      if (orderDetailsError || !orderDetails) {
-        console.error('Error fetching order details:', orderDetailsError)
-        return
-      }
-
-      // Get available rolls for this fabric type that can be shipped
-      const { data: availableRolls, error: rollsError } = await supabase
-        .from('fabric_rolls')
-        .select('id, roll_number, length, remaining_length')
-        .eq('fabric_type', 'finished_fabric')
-        .eq('fabric_id', orderDetails.finished_fabric_id)
-        .eq('roll_status', 'available')
-        .order('created_at', { ascending: true }) // FIFO - first in, first out
-        .limit(20) // Get up to 20 rolls to choose from
-
-      if (rollsError) {
-        console.error('Error fetching available rolls:', rollsError)
-        return
-      }
-
-      // Calculate how much to ship based on order allocation
-      let remainingToShip = orderDetails.quantity_allocated
-      const shipmentItems = []
-
-      for (const roll of availableRolls || []) {
-        if (remainingToShip <= 0) break
-        
-        const quantityToShip = Math.min(remainingToShip, roll.remaining_length || roll.length)
-        if (quantityToShip > 0) {
-          shipmentItems.push({
-            shipment_id: shipment.id,
-            fabric_roll_id: roll.id,
-            quantity_shipped: quantityToShip
-          })
-          remainingToShip -= quantityToShip
-        }
-      }
-
-      // Add rolls to shipment
-      if (shipmentItems.length > 0) {
-        const { error: itemsError } = await supabase
-          .from('shipment_items')
-          .insert(shipmentItems)
-
-        if (itemsError) {
-          console.error('Error adding items to shipment:', itemsError)
-          // Don't throw - shipment exists, just without items
-        } else {
-          console.log(`Added ${shipmentItems.length} rolls to shipment`)
-
-          // Update roll status to 'dispatched' for all shipped rolls
-          const rollIds = shipmentItems.map(item => item.fabric_roll_id)
-          if (rollIds.length > 0) {
-            const { error: updateError } = await supabase
-              .from('fabric_rolls')
-              .update({
-                roll_status: 'dispatched',
-                archived: true,
-                updated_at: new Date().toISOString()
-              })
-              .in('id', rollIds)
-            if (updateError) {
-              console.error('Error updating roll status to dispatched:', updateError)
-            }
-          }
-        }
-      }
-
-      console.log('Shipment created successfully:', shipment.shipment_number)
-    } catch (error) {
-      console.error('Error creating shipment:', error)
-      throw error // Re-throw to be caught by the calling function
     }
   }
 

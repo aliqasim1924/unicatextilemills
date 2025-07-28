@@ -10,301 +10,281 @@ interface CompleteProductionRequest {
   qualityNotes?: string
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ message: 'Method not allowed' })
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { productionOrderId, requestedQuantity, completedBy } = req.body;
+
+  if (!productionOrderId) {
+    return res.status(400).json({ error: 'Production order ID is required' });
   }
 
   try {
-    const {
-      productionOrderId,
-      actualQuantity: requestedQuantity,
-      completedBy = 'System',
-      qualityNotes
-    }: CompleteProductionRequest = req.body
-
-    console.log('Production completion request:', { productionOrderId, requestedQuantity, completedBy })
-
-    // Validate required fields
-    if (!productionOrderId) {
-      return res.status(400).json({ 
-        message: 'Missing required field: productionOrderId' 
-      })
-    }
-
     // Get production order details
     const { data: productionOrder, error: orderError } = await supabase
       .from('production_orders')
-      .select(`
-        *,
-        base_fabrics (id, name, gsm, width_meters, stock_quantity),
-        finished_fabrics (id, name, gsm, width_meters, coating_type, stock_quantity),
-        customer_orders (
-          id,
-          internal_order_number,
-          customers (
-            name
-          )
-        )
-      `)
+      .select('*')
       .eq('id', productionOrderId)
-      .single()
+      .single();
 
-    if (orderError || !productionOrder) {
-      console.error('Production order not found:', orderError)
-      return res.status(404).json({ message: 'Production order not found' })
+    if (orderError) {
+      return res.status(500).json({ error: `Failed to get production order: ${orderError.message}` });
     }
 
-    if (productionOrder.production_status === 'completed') {
-      return res.status(400).json({ message: 'Production order already completed' })
-    }
+    const fabricId = productionOrder?.finished_fabric_id;
+    const fabricType = productionOrder?.production_type;
+    const actualQuantity = requestedQuantity || productionOrder?.quantity || 0;
 
-    // Use requested quantity or fall back to required quantity
-    const actualQuantity = requestedQuantity || productionOrder.quantity_required
+    // Generate batch number
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    const batchNumber = `${fabricType?.toUpperCase()}-${year}${month}${day}-${random}`;
 
-    console.log('Using actualQuantity:', actualQuantity)
+    // Get customer color for production
+    const customerOrderItemId = productionOrder.customer_order_item_id;
+    const { data: customerOrderItem } = await supabase
+      .from('customer_order_items')
+      .select('customer_color')
+      .eq('id', customerOrderItemId)
+      .single();
 
-    // Generate batch number using centralized utility
-    const batchNumber = await numberingUtils.generateBatchNumber(productionOrder.production_type)
-    const now = new Date()
+    const customerColor = customerOrderItem?.customer_color || 'default';
 
-    console.log('Generated batch number:', batchNumber)
-
-    // Get customer color directly from production order (set during creation)
-    const customerColor = productionOrder.customer_color || 'Natural'
-    const customerOrderItemId = productionOrder.customer_order_item_id
-
-    console.log('Customer color for production:', customerColor)
-    console.log('Production order customer_color field:', productionOrder.customer_color)
-    console.log('Customer order item ID:', customerOrderItemId)
-    console.log('Full production order object:', JSON.stringify(productionOrder, null, 2))
-
-    // Create batch record with customer color information
+    // Create production batch
     const { data: batch, error: batchError } = await supabase
       .from('production_batches')
       .insert({
         batch_number: batchNumber,
         production_order_id: productionOrderId,
-        production_type: productionOrder.production_type,
-        planned_quantity: productionOrder.quantity_required,
-        actual_a_grade_quantity: actualQuantity,
-        batch_status: 'completed',
+        production_type: fabricType,
+        quantity_produced: actualQuantity,
         customer_color: customerColor,
-        customer_order_item_id: customerOrderItemId,
-        base_fabric_id: productionOrder.base_fabric_id,
-        finished_fabric_id: productionOrder.finished_fabric_id,
-        created_at: now.toISOString(),
-        completed_at: now.toISOString(),
-        notes: qualityNotes
+        status: 'completed',
+        completed_by: completedBy,
+        completed_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select()
-      .single()
+      .single();
 
     if (batchError) {
-      console.error('Failed to create batch:', batchError)
-      return res.status(500).json({ message: `Failed to create batch: ${batchError.message}` })
+      return res.status(500).json({ error: `Failed to create batch: ${batchError.message}` });
     }
 
-    console.log('Batch created:', batch)
+    // Create fabric rolls based on production type
+    if (fabricType === 'coating') {
+      // Create individual finished fabric rolls
+      const rollsToCreate = Math.ceil(actualQuantity / 50); // 50m per roll
+      const createdRolls = [];
 
-    // Create fabric rolls ONLY for coating operations (finished fabric)
-    let createdRolls: {
-      id: string
-      roll_number: string
-      batch_id: string
-      fabric_type: string
-      fabric_id: string
-      roll_length: number
-      remaining_length: number
-      qr_code: string
-      roll_status: string
-      created_at: string
-    }[] = []
-    
-    if (productionOrder.production_type === 'coating') {
-      console.log('Creating fabric rolls for coating production (finished fabric)')
-      
-      const fabricId = productionOrder.finished_fabric_id
-      const fabricType = 'finished_fabric'
+      for (let i = 0; i < rollsToCreate; i++) {
+        const rollLength = Math.min(50, actualQuantity - (i * 50));
+        if (rollLength <= 0) break;
 
-      console.log('Creating rolls for:', { fabricId, fabricType, actualQuantity })
-
-      // Calculate number of rolls (50m each)
-      const rollLength = 50
-      const rollCount = Math.ceil(actualQuantity / rollLength)
-      const rolls = []
-
-      // Create roll records with API-based QR codes
-      for (let i = 1; i <= rollCount; i++) {
-        const rollNumber = `${batchNumber}-R${i.toString().padStart(3, '0')}`
-        const actualLength = i === rollCount ? actualQuantity % rollLength || rollLength : rollLength
+        const rollNumber = `${batchNumber}-A${actualQuantity}-R${String(i + 1).padStart(3, '0')}`;
         
-        // Insert roll first to get the roll ID
-        const { data: rollData, error: rollError } = await supabase
+        // Generate QR code data
+        const qrData = {
+          type: 'api_roll',
+          rollId: '', // Will be set after roll creation
+          apiUrl: '',
+          qrGeneratedAt: new Date().toISOString(),
+          status: 'available'
+        };
+
+        const { data: roll, error: rollError } = await supabase
           .from('fabric_rolls')
           .insert({
             roll_number: rollNumber,
-            batch_id: batch.id,
-            fabric_type: fabricType,
             fabric_id: fabricId,
-            roll_length: actualLength,
-            remaining_length: actualLength,
-            qr_code: '', // Temporary empty QR code
+            fabric_type: 'finished_fabric',
+            roll_length: rollLength,
+            remaining_length: rollLength,
             roll_status: 'available',
             customer_color: customerColor,
-            customer_order_item_id: customerOrderItemId,
-            created_at: now.toISOString()
+            batch_id: batch.id,
+            qr_code: JSON.stringify(qrData),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           })
           .select()
-          .single()
+          .single();
 
         if (rollError) {
-          console.error('Failed to create roll:', rollError)
-          return res.status(500).json({ message: `Failed to create roll: ${rollError.message}` })
+          return res.status(500).json({ error: `Failed to create roll ${rollNumber}: ${rollError.message}` });
         }
 
-        // Generate API-based QR code with the roll ID
-        const { loomTrackingUtils } = await import('@/lib/utils/loomTrackingUtils')
-        const qrData = loomTrackingUtils.generateApiQRData(rollData.id)
+        // Update QR code with roll ID
+        const updatedQrData = {
+          ...qrData,
+          rollId: roll.id,
+          apiUrl: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://unicatextilemills.netlify.app'}/roll/${roll.id}`
+        };
 
-        // Update the roll with the QR code
-        await supabase
+        const { error: qrUpdateError } = await supabase
           .from('fabric_rolls')
           .update({
-            qr_code: JSON.stringify(qrData)
+            qr_code: JSON.stringify(updatedQrData)
           })
-          .eq('id', rollData.id)
+          .eq('id', roll.id);
 
-        rolls.push({
-          ...rollData,
-          qr_code: JSON.stringify(qrData)
-        })
+        if (qrUpdateError) {
+          return res.status(500).json({ error: `Failed to update QR code for roll ${roll.id}: ${qrUpdateError.message}` });
+        }
+
+        createdRolls.push(roll);
       }
 
-      createdRolls = rolls
-      console.log('Fabric rolls created:', createdRolls.length)
-    } else {
-      console.log('Weaving production - no fabric rolls created, base fabric stored in bulk')
+      // Update finished fabric stock
+      const { data: finishedFabric } = await supabase
+        .from('finished_fabrics')
+        .select('stock_quantity')
+        .eq('id', fabricId)
+        .single();
+
+      const newFinishedStock = (finishedFabric?.stock_quantity || 0) + actualQuantity;
+      
+      const { error: finishedStockError } = await supabase
+        .from('finished_fabrics')
+        .update({
+          stock_quantity: newFinishedStock,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', fabricId);
+
+      if (finishedStockError) {
+        return res.status(500).json({ error: `Failed to update finished fabric stock: ${finishedStockError.message}` });
+      }
+
+    } else if (fabricType === 'weaving') {
+      // For weaving, create loom rolls and corresponding base fabric rolls
+      const rollsToCreate = Math.ceil(actualQuantity / 50); // 50m per roll
+      
+      for (let i = 0; i < rollsToCreate; i++) {
+        const rollLength = Math.min(50, actualQuantity - (i * 50));
+        if (rollLength <= 0) break;
+
+        const rollNumber = `${batchNumber}-A${actualQuantity}-R${String(i + 1).padStart(3, '0')}`;
+        
+        // Create loom roll
+        const { data: loomRoll, error: loomRollError } = await supabase
+          .from('loom_rolls')
+          .insert({
+            roll_number: rollNumber,
+            production_order_id: productionOrderId,
+            roll_length: rollLength,
+            roll_status: 'available',
+            customer_color: customerColor,
+            batch_id: batch.id,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (loomRollError) {
+          return res.status(500).json({ error: `Failed to create loom roll ${rollNumber}: ${loomRollError.message}` });
+        }
+
+        // Create corresponding base fabric roll with QR code
+        const qrData = {
+          type: 'api_roll',
+          rollId: '', // Will be set after roll creation
+          apiUrl: '',
+          qrGeneratedAt: new Date().toISOString(),
+          status: 'available'
+        };
+
+        const { data: baseFabricRoll, error: baseFabricRollError } = await supabase
+          .from('fabric_rolls')
+          .insert({
+            roll_number: rollNumber,
+            fabric_id: fabricId,
+            fabric_type: 'base_fabric',
+            roll_length: rollLength,
+            remaining_length: rollLength,
+            roll_status: 'available',
+            customer_color: customerColor,
+            batch_id: batch.id,
+            qr_code: JSON.stringify(qrData),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (baseFabricRollError) {
+          return res.status(500).json({ error: `Failed to create base fabric roll ${rollNumber}: ${baseFabricRollError.message}` });
+        }
+
+        // Update QR code with roll ID
+        const updatedQrData = {
+          ...qrData,
+          rollId: baseFabricRoll.id,
+          apiUrl: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://unicatextilemills.netlify.app'}/roll/${baseFabricRoll.id}`
+        };
+
+        const { error: qrUpdateError } = await supabase
+          .from('fabric_rolls')
+          .update({
+            qr_code: JSON.stringify(updatedQrData)
+          })
+          .eq('id', baseFabricRoll.id);
+
+        if (qrUpdateError) {
+          return res.status(500).json({ error: `Failed to update QR code for base fabric roll ${baseFabricRoll.id}: ${qrUpdateError.message}` });
+        }
+      }
+
+      // Update base fabric stock
+      const { data: baseFabric } = await supabase
+        .from('base_fabrics')
+        .select('stock_quantity')
+        .eq('id', fabricId)
+        .single();
+
+      const newStock = (baseFabric?.stock_quantity || 0) + actualQuantity;
+      
+      const { error: stockError } = await supabase
+        .from('base_fabrics')
+        .update({
+          stock_quantity: newStock,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', fabricId);
+
+      if (stockError) {
+        return res.status(500).json({ error: `Failed to update base fabric stock: ${stockError.message}` });
+      }
     }
 
     // Update production order status
     const { error: updateError } = await supabase
       .from('production_orders')
       .update({
-        production_status: 'completed',
-        quantity_produced: actualQuantity,
-        actual_end_date: now.toISOString(),
-        notes: qualityNotes,
-        updated_at: now.toISOString()
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
-      .eq('id', productionOrderId)
+      .eq('id', productionOrderId);
 
     if (updateError) {
-      console.error('Failed to update production order:', updateError)
-      return res.status(500).json({ message: `Failed to update production order: ${updateError.message}` })
+      return res.status(500).json({ error: `Failed to update production order: ${updateError.message}` });
     }
 
-    console.log('Production order updated to completed')
-
-    // Update stock quantities
-    if (productionOrder.production_type === 'weaving' && productionOrder.base_fabrics) {
-      // Update base fabric stock
-      const newStock = (productionOrder.base_fabrics.stock_quantity || 0) + actualQuantity
-      
-      await supabase
-        .from('base_fabrics')
-        .update({
-          stock_quantity: newStock,
-          updated_at: now.toISOString()
-        })
-        .eq('id', productionOrder.base_fabric_id)
-
-      // Record stock movement
-      await supabase
-        .from('stock_movements')
-        .insert({
-          fabric_type: 'base_fabric',
-          fabric_id: productionOrder.base_fabric_id!,
-          movement_type: 'production_in',
-          quantity: actualQuantity,
-          reference_id: productionOrderId,
-          reference_type: 'production_order',
-          notes: `Production completed - Batch ${batchNumber}`,
-          created_at: now.toISOString()
-        })
-
-      console.log('Base fabric stock updated:', newStock)
-    } else if (productionOrder.production_type === 'coating' && productionOrder.finished_fabrics) {
-      // For coating production, only add finished fabric stock (output)
-      // Base fabric stock is already deducted when production starts
-      
-      // Add finished fabric stock
-      const newFinishedStock = (productionOrder.finished_fabrics.stock_quantity || 0) + actualQuantity
-      
-      await supabase
-        .from('finished_fabrics')
-        .update({
-          stock_quantity: newFinishedStock,
-          updated_at: now.toISOString()
-        })
-        .eq('id', productionOrder.finished_fabric_id)
-
-      // Record finished fabric stock movement (production output)
-      await supabase
-        .from('stock_movements')
-        .insert({
-          fabric_type: 'finished_fabric',
-          fabric_id: productionOrder.finished_fabric_id!,
-          movement_type: 'production_in',
-          quantity: actualQuantity,
-          reference_id: productionOrderId,
-          reference_type: 'production_order',
-          notes: `Coating production completed - Batch ${batchNumber}`,
-          created_at: now.toISOString()
-        })
-
-      console.log('Finished fabric stock updated:', newFinishedStock)
-    }
-
-    // Return success response
     return res.status(200).json({
-      message: `${productionOrder.production_type.charAt(0).toUpperCase() + productionOrder.production_type.slice(1)} production completed successfully`,
-      batchNumber: batchNumber,
-      rollsCreated: createdRolls.length,
-      qrCodesGenerated: productionOrder.production_type === 'coating',
-      productionType: productionOrder.production_type,
-      notificationsSent: true,
-      data: {
-        productionOrder: {
-          id: productionOrder.id,
-          status: 'completed',
-          completedAt: now.toISOString(),
-          type: productionOrder.production_type
-        },
-        batch: {
-          id: batch.id,
-          batchNumber: batch.batch_number,
-          actualQuantity: actualQuantity
-        },
-        rolls: createdRolls.map(roll => ({
-          id: roll.id,
-          rollNumber: roll.roll_number,
-          rollLength: roll.roll_length,
-          qrCode: roll.qr_code
-        })),
-        stockUpdated: true,
-        fabricType: productionOrder.production_type === 'weaving' ? 'base_fabric' : 'finished_fabric'
-      }
-    })
+      success: true,
+      batch: batch,
+      message: 'Production completed successfully'
+    });
 
   } catch (error) {
-    console.error('Error completing production:', error)
-    return res.status(500).json({ 
-      message: 'Internal server error',
-      error: error instanceof Error ? error.message : 'Unknown error'
-    })
+    return res.status(500).json({ error: `Internal server error: ${error}` });
   }
 } 
