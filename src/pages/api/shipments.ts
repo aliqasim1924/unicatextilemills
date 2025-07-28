@@ -92,10 +92,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: `Error inserting shipment items: ${itemsError.message}` });
     }
 
-    // Update rolls to shipped status and archive them
+    // Update rolls to shipped status, archive them, and update location
     const rollUpdates = allocatedRolls.map(roll => ({
       id: roll.id,
       roll_status: 'shipped',
+      location: 'In Transit',
       archived: true,
       updated_at: new Date().toISOString(),
     }));
@@ -105,6 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .from('fabric_rolls')
         .update({
           roll_status: update.roll_status,
+          location: update.location,
           archived: update.archived,
           updated_at: update.updated_at,
         })

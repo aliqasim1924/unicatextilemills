@@ -18,6 +18,7 @@ interface ParsedQRData {
   fabricType?: string
   color?: string
   allocationStatus?: string
+  location?: string
   qrGeneratedAt: string
   productionPurpose?: string
   customerOrderNumber?: string
@@ -116,6 +117,7 @@ export default function QRCodeDisplay({
               <p><strong>Length:</strong> {parsedData.rollLength}m</p>
               <p><strong>Colour:</strong> {parsedData.color || '—'}</p>
               <p><strong>Status:</strong> {parsedData.allocationStatus || 'Available'}</p>
+              <p><strong>Location:</strong> {parsedData.location || 'Warehouse'}</p>
               <p><strong>Batch:</strong> {parsedData.productionPurpose === 'customer_order' && parsedData.customerOrderNumber ? `Order ${parsedData.customerOrderNumber}${parsedData.customerName ? ' - ' + parsedData.customerName : ''}` : 'Stock Building'}</p>
             </div>
           )}

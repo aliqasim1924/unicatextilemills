@@ -442,6 +442,37 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
         } // End of for loop
       }
 
+      // Handle delivery API call BEFORE updating order status
+      if (pendingAction.action === 'deliver') {
+        try {
+          console.log('Calling delivery API for order:', order.id);
+          
+          const response = await fetch('/api/shipments/deliver', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              orderId: order.id, 
+              deliveryData: {
+                notes: dispatchData.dispatch_notes || 'Delivery confirmed'
+              }
+            })
+          });
+          
+          const result = await response.json();
+          console.log('Delivery API response:', result);
+          
+          if (!response.ok) {
+            throw new Error(result.error || 'Failed to mark order as delivered');
+          }
+          
+        } catch (deliveryError: any) {
+          console.error('Error marking order as delivered:', deliveryError);
+          alert(`Warning: Failed to mark order as delivered: ${deliveryError.message || 'Unknown error'}`);
+          // Continue with order update even if delivery API fails
+          // The order will still be marked as delivered
+        }
+      }
+
       const updateData: any = {
         order_status: pendingAction.newStatus,
         updated_at: new Date().toISOString()

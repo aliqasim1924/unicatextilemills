@@ -68,6 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Determine allocation status
     let allocationStatus = 'Available'
+    
     if (roll.roll_status === 'allocated') {
       if (roll.production_batches?.production_orders?.customer_orders?.customers?.name) {
         allocationStatus = `Allocated to ${roll.production_batches.production_orders.customer_orders.customers.name}`
@@ -80,6 +81,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       allocationStatus = 'Used in fulfillment'
     } else if (roll.roll_status === 'shipped') {
       allocationStatus = 'Shipped to customer'
+    } else if (roll.roll_status === 'delivered') {
+      allocationStatus = 'Delivered to customer'
     } else if (roll.roll_status === 'available') {
       if (roll.production_batches?.production_orders?.customer_orders?.customers?.name) {
         allocationStatus = `Available for ${roll.production_batches.production_orders.customer_orders.customers.name}`
@@ -87,6 +90,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         allocationStatus = 'Available for stock building'
       }
     }
+
+    // Use the location field from the database
+    const location = roll.location || 'Warehouse'
 
     // Return all live roll data as JSON
     res.status(200).json({
@@ -97,6 +103,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       fabricName,
       color: fabricColor,
       allocationStatus,
+      location,
       rollLength: roll.roll_length,
       remainingLength: roll.remaining_length,
       rollStatus: roll.roll_status,

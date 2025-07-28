@@ -80,6 +80,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // Determine allocation status
       let allocationStatus = 'Available'
+      
       if (fabricRoll.roll_status === 'allocated') {
         if (fabricRoll.production_batches?.production_orders?.customer_orders?.customers?.name) {
           allocationStatus = `Allocated to ${fabricRoll.production_batches.production_orders.customer_orders.customers.name}`
@@ -92,6 +93,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         allocationStatus = 'Used in fulfillment'
       } else if (fabricRoll.roll_status === 'shipped') {
         allocationStatus = 'Shipped to customer'
+      } else if (fabricRoll.roll_status === 'delivered') {
+        allocationStatus = 'Delivered to customer'
       } else if (fabricRoll.roll_status === 'available') {
         // Check if it's for a customer order or stock building
         if (fabricRoll.production_batches?.production_orders?.customer_orders?.customers?.name) {
@@ -100,6 +103,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           allocationStatus = 'Available for stock building'
         }
       }
+
+      // Use the location field from the database
+      const location = fabricRoll.location || 'Warehouse'
 
       const rollDetails = {
         id: fabricRoll.id,
@@ -119,7 +125,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         customerOrderNumber: fabricRoll.production_batches?.production_orders?.customer_orders?.internal_order_number,
         customerName: fabricRoll.production_batches?.production_orders?.customer_orders?.customers?.name,
         createdAt: fabricRoll.created_at,
-        location: fabricRoll.location || 'warehouse'
+        location
       }
 
       return res.status(200).json({

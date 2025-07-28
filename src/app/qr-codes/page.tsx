@@ -281,7 +281,9 @@ export default function QRCodesPage() {
         case 'used':
           return 'Used in fulfillment'
         case 'shipped':
-          return 'Shipped to customer'
+          return 'In Transit'
+        case 'delivered':
+          return 'Delivered to Customer'
         case 'available':
         default:
           // Check if it's for a customer order or stock building
