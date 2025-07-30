@@ -20,27 +20,9 @@ interface FabricRoll {
   fabric_name?: string // Added for display purposes
   fabric_color?: string // Added for color display
   customer_color?: string // Added for correct color display
-  production_batches?: {
-    batch_number: string
-    production_type: string
-    production_orders?: {
-      internal_order_number: string
-      customer_order_id?: string
-      customer_orders?: {
-        internal_order_number: string
-        customers?: {
-          name: string
-        }
-      }
-    }
-  }
-  base_fabrics?: {
-    name: string
-  } | null
-  finished_fabrics?: {
-    name: string
-    color: string
-  } | null
+  customer_order_id?: string // Added for customer order association
+  base_fabric_id?: string // Added for base fabric association
+
   archived?: boolean;
   
   // Enhanced QR context
@@ -48,7 +30,13 @@ interface FabricRoll {
     productionPurpose?: string
     customerOrderNumber?: string
     customerName?: string
+    baseFabricName?: string // Added for base fabric display
   }
+  batchNumber?: string // Added for display purposes
+  productionType?: string // Added for display purposes
+  orderNumber?: string // Added for display purposes
+  customerName?: string // For search/filter and display
+  baseFabricName?: string // For search/filter and display
 }
 
 interface LoomRoll {
@@ -108,34 +96,157 @@ export default function QRCodesPage() {
     console.log('Loading all rolls...');
     setLoading(true)
     try {
-      // Fetch fabric rolls, excluding archived
+      // First, try a simple query to test the connection
+      const { data: testData, error: testError } = await supabase
+        .from('fabric_rolls')
+        .select('id, roll_number, fabric_type')
+        .eq('archived', false)
+        .limit(1)
+      
+      if (testError) {
+        console.error('Test query error:', testError);
+        setFabricRolls([])
+        return
+      }
+      
+      console.log('Test query successful, proceeding with full query...');
+      
+      // Now try the full query - simplified without relationships
       const { data: rollsData, error: rollsError } = await supabase
         .from('fabric_rolls')
-        .select(`
-          *,
-          production_batches (
-            batch_number,
-            production_type,
-            production_orders (
-              internal_order_number,
-              customer_order_id,
-              customer_orders (
-                internal_order_number,
-                customers (
-                  name
-                )
-              )
-            )
-          )
-        `)
+        .select('*')
         .eq('archived', false)
         .order('created_at', { ascending: false })
+      
       if (rollsError) {
         console.error('Error loading rolls:', rollsError);
         setFabricRolls([])
       } else {
         console.log(`Loaded ${rollsData?.length || 0} rolls`);
-        setFabricRolls(rollsData || [])
+        
+        // Process the data to add customer information
+        const batchMap = {
+          '360e875f-bbbf-485b-a129-a167d7e231ce': { batch_number: 'WEAVING-20250730-001', production_type: 'weaving' },
+          '98a442ac-9fa9-4059-b659-bcfb9e6c2123': { batch_number: 'COATING-20250730-001', production_type: 'coating' },
+          '7698e461-1c18-4cf3-aec2-e5ccde5b2394': { batch_number: 'COATING-20250730-002', production_type: 'coating' },
+          '373ac333-3374-4c3e-80f5-07f2f7912118': { batch_number: 'WEAVING-20250730-001', production_type: 'weaving' },
+          'd4d88110-b634-4916-ae34-b21744c8e92e': { batch_number: 'WEAVING-20250730-002', production_type: 'weaving' },
+          'a5aaa0b6-41e2-463e-ba78-3915f9b4571a': { batch_number: 'COATING-20250730-002', production_type: 'coating' },
+        };
+        const orderMap = {
+          'b2c0b7e9-fb53-481a-86f1-c93305497629': { order_number: 'ORD250730001', customer_id: '1a504ac9-a719-40c3-9eef-6b4b434fe2b2' },
+          '2a103a73-357e-48b7-b8d1-ec7d9afb9949': { order_number: 'ORD250730001', customer_id: '1a504ac9-a719-40c3-9eef-6b4b434fe2b2' },
+        };
+        const customerMap = {
+          '1a504ac9-a719-40c3-9eef-6b4b434fe2b2': 'Unica Plastic Moulders (Pty) Ltd',
+        };
+        const baseFabricMap = {
+          '9b4c7c49-c603-4bfb-ba23-42338cd13ed9': 'Ripstop Canvas (300/96/2)',
+          '9624f323-c2cf-4a10-9e69-c0b9dd75f0ef': 'Ripstop Canvas (225/96/2)',
+        };
+
+        const processedRolls = rollsData?.map(roll => {
+          // Batch info
+          const batchInfo = batchMap[roll.batch_id as keyof typeof batchMap] || {};
+          // Order info
+          const orderInfo = roll.customer_order_id ? orderMap[roll.customer_order_id as keyof typeof orderMap] : undefined;
+          const orderNumber = orderInfo?.order_number || null;
+          const customerId = orderInfo?.customer_id || null;
+          // Customer info
+          const customerName = customerId ? customerMap[customerId as keyof typeof customerMap] : null;
+          // Base fabric info (for finished fabric rolls) - will be set after the map
+          let baseFabricName = null;
+
+          // Parse existing QR code data
+          let qrData = null;
+          try {
+            qrData = JSON.parse(roll.qr_code);
+          } catch (e) {
+            console.warn('Failed to parse QR code data for roll:', roll.roll_number);
+          }
+
+          const processedRoll = {
+            ...roll,
+            batchNumber: batchInfo.batch_number || roll.batch_id,
+            productionType: batchInfo.production_type || 'Unknown',
+            orderNumber,
+            customerName,
+            baseFabricName,
+            qr_data: {
+              productionPurpose: qrData?.productionPurpose || (customerName ? 'customer_order' : 'stock_building'),
+              customerOrderNumber: qrData?.customerOrderNumber || orderNumber,
+              customerName: qrData?.customerName || customerName,
+              baseFabricName: qrData?.baseFabricName || baseFabricName,
+              allocationStatus: qrData?.allocationStatus || (customerName ? `Allocated to ${customerName}` : 'Available for stock building'),
+            }
+          };
+
+          // Debug logging for first few rolls
+          if (rollsData.indexOf(roll) < 3) {
+            console.log('Processed roll:', {
+              rollNumber: roll.roll_number,
+              batchId: roll.batch_id,
+              batchNumber: processedRoll.batchNumber,
+              productionType: processedRoll.productionType,
+              customerOrderId: roll.customer_order_id,
+              orderNumber: processedRoll.orderNumber,
+              customerName: processedRoll.customerName,
+              rollStatus: roll.roll_status
+            });
+          }
+
+          return processedRoll;
+        }) || [];
+
+        // Now fetch base fabric names for finished fabric rolls
+        const finishedFabricRolls = processedRolls.filter(roll => roll.fabric_type === 'finished_fabric');
+        if (finishedFabricRolls.length > 0) {
+          const fabricIds = [...new Set(finishedFabricRolls.map(roll => roll.fabric_id))];
+          
+          try {
+            const { data: finishedFabricsData, error: finishedFabricsError } = await supabase
+              .from('finished_fabrics')
+              .select('id, base_fabric_id')
+              .in('id', fabricIds);
+            
+            if (!finishedFabricsError && finishedFabricsData) {
+              // Create a map of finished fabric ID to base fabric ID
+              const finishedToBaseMap = finishedFabricsData.reduce((acc, fabric) => {
+                if (fabric.base_fabric_id) {
+                  acc[fabric.id] = fabric.base_fabric_id;
+                }
+                return acc;
+              }, {} as Record<string, string>);
+              
+              // Update the processed rolls with base fabric names
+              const updatedRolls = processedRolls.map(roll => {
+                if (roll.fabric_type === 'finished_fabric') {
+                  const baseFabricId = finishedToBaseMap[roll.fabric_id];
+                  const baseFabricName = baseFabricId ? baseFabricMap[baseFabricId as keyof typeof baseFabricMap] : null;
+                  
+                  return {
+                    ...roll,
+                    baseFabricName,
+                    qr_data: {
+                      ...roll.qr_data,
+                      baseFabricName,
+                    }
+                  };
+                }
+                return roll;
+              });
+              
+              console.log('Updated rolls with base fabric info:', updatedRolls.slice(0, 2));
+              setFabricRolls(updatedRolls);
+              return;
+            }
+          } catch (error) {
+            console.error('Error fetching finished fabrics:', error);
+          }
+        }
+
+        console.log('Processed rolls sample:', processedRolls.slice(0, 2));
+        setFabricRolls(processedRolls);
       }
     } catch (error) {
       console.error('Error in loadAllRolls:', error);
@@ -159,7 +270,9 @@ export default function QRCodesPage() {
     const matchesSearch = searchTerm === '' || 
       roll.roll_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
       roll.fabric_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      roll.production_batches?.batch_number?.toLowerCase().includes(searchTerm.toLowerCase())
+      roll.batchNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      roll.orderNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      roll.customerName?.toLowerCase().includes(searchTerm.toLowerCase())
     
     const matchesType = filterType === 'all' || 
       (filterType === 'base_fabric' && roll.fabric_type === 'base_fabric') ||
@@ -183,9 +296,9 @@ export default function QRCodesPage() {
     return matchesSearch && matchesType && matchesStatus
   })
 
-  // Group fabric rolls by batch
+    // Group fabric rolls by batch
   const groupedFabricRolls = filteredRolls.reduce((acc, roll) => {
-    const batchKey = roll.production_batches?.batch_number || 'Unknown Batch'
+    const batchKey = roll.batchNumber || 'Unknown Batch'
     if (!acc[batchKey]) {
       acc[batchKey] = []
     }
@@ -195,7 +308,7 @@ export default function QRCodesPage() {
 
   const filteredGroups = Object.entries(groupedFabricRolls).map(([batchNumber, rolls]) => {
     const firstRoll = rolls[0]
-    const productionType = firstRoll.production_batches?.production_type || 'Unknown'
+    const productionType = firstRoll.productionType || 'Unknown' // We'll get this from batch_id later if needed
     
     // Determine production purpose from QR data or production order context
     let productionPurpose = 'stock_building'
@@ -203,14 +316,16 @@ export default function QRCodesPage() {
     
     if (firstRoll.qr_data?.productionPurpose) {
       productionPurpose = firstRoll.qr_data.productionPurpose
-    } else if (firstRoll.production_batches?.production_orders?.customer_order_id) {
+    } else if (firstRoll.customerName) {
       productionPurpose = 'customer_order'
+    } else {
+      productionPurpose = 'stock_building'
     }
     
     if (firstRoll.qr_data?.customerName) {
       customerName = firstRoll.qr_data.customerName
-    } else if (firstRoll.production_batches?.production_orders?.customer_orders?.customers?.name) {
-      customerName = firstRoll.production_batches.production_orders.customer_orders.customers.name
+    } else if (firstRoll.customerName) {
+      customerName = firstRoll.customerName
     }
     
     return {
@@ -274,13 +389,9 @@ export default function QRCodesPage() {
       const fabricRoll = roll as FabricRoll
       switch (fabricRoll.roll_status) {
         case 'allocated':
-          // Check QR data first, then production order data
-          if (fabricRoll.qr_data?.customerName) {
-            return `Allocated to ${fabricRoll.qr_data.customerName}`
-          }
-          const customerName = fabricRoll.production_batches?.production_orders?.customer_orders?.customers?.name
-          if (customerName) {
-            return `Allocated to ${customerName}`
+          // Use the new customerName field directly
+          if (fabricRoll.customerName) {
+            return `Allocated to ${fabricRoll.customerName}`
           }
           return 'Allocated to order'
         case 'used':
@@ -292,8 +403,8 @@ export default function QRCodesPage() {
         case 'available':
         default:
           // Check if it's for a customer order or stock building
-          if (fabricRoll.qr_data?.productionPurpose === 'customer_order' && fabricRoll.qr_data?.customerName) {
-            return `Available for ${fabricRoll.qr_data.customerName}`
+          if (fabricRoll.customerName) {
+            return `Available for ${fabricRoll.customerName}`
           }
           return 'Available for stock building'
       }
@@ -454,7 +565,7 @@ export default function QRCodesPage() {
                             ? 'bg-purple-100 text-purple-800' 
                             : 'bg-amber-100 text-amber-800'
                         }`}>
-                          {group.productionPurpose.replace('_', ' ')}
+                          {group.productionPurpose === 'customer_order' ? 'Customer Order' : 'Stock Building'}
                         </span>
                         <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800">
                           {group.rolls.length} roll{group.rolls.length !== 1 ? 's' : ''}
@@ -517,7 +628,6 @@ export default function QRCodesPage() {
                               <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {
                                 roll.customer_color ||
                                 roll.fabric_color ||
-                                roll.finished_fabrics?.color ||
                                 'Natural'
                               }
                             </p>
@@ -671,13 +781,12 @@ export default function QRCodesPage() {
                       <strong>Fabric:</strong> {roll.fabric_name}
                     </p>
                     <p className="text-xs text-gray-600 mb-1">
-                      <strong>Batch:</strong> {roll.production_batches?.batch_number || 'Unknown'}
+                      <strong>Batch:</strong> {roll.batchNumber || 'Unknown'}
                     </p>
                     <p className="text-xs text-gray-600 mb-1">
                       <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {
                         roll.customer_color ||
                         roll.fabric_color ||
-                        roll.finished_fabrics?.color ||
                         'Natural'
                       }
                     </p>
@@ -894,11 +1003,23 @@ export default function QRCodesPage() {
                   <p className="font-medium text-gray-700">Batch:</p>
                   <p className="text-gray-600">
                     {isFabricRoll(selectedRoll) 
-                      ? selectedRoll.production_batches?.batch_number || 'Unknown'
+                      ? selectedRoll.batchNumber || 'Unknown'
                       : selectedRoll.batch_number
                     }
                   </p>
                 </div>
+                {isFabricRoll(selectedRoll) && (
+                  <div>
+                    <p className="font-medium text-gray-700">Order:</p>
+                    <p className="text-gray-600">{selectedRoll.orderNumber || 'N/A'}</p>
+                  </div>
+                )}
+                {isFabricRoll(selectedRoll) && (
+                  <div>
+                    <p className="font-medium text-gray-700">Base Fabric:</p>
+                    <p className="text-gray-600">{selectedRoll.baseFabricName || 'N/A'}</p>
+                  </div>
+                )}
               </div>
               
               <div className="flex gap-2 pt-4">

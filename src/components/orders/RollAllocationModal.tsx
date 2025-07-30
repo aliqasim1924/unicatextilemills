@@ -23,7 +23,9 @@ interface FabricRoll {
   roll_status: 'available' | 'allocated' | 'partially_allocated'
   roll_type: 'full_50m' | 'short' | 'wastage'
   fabric_id: string
+  fabric_type: 'base_fabric' | 'finished_fabric'
   batch_id?: string
+  customer_color?: string
   created_at: string
   production_batches?: {
     batch_number: string
@@ -252,6 +254,27 @@ export default function RollAllocationModal({
         const newRemainingLength = roll.remaining_length - selectedRoll.allocatedLength
         const newStatus = newRemainingLength === 0 ? 'allocated' : 'partially_allocated'
 
+        // Update QR code with enriched data
+        const enrichedQrData = {
+          type: 'fabric_roll',
+          rollNumber: roll.roll_number,
+          batchId: roll.batch_id,
+          fabricType: roll.fabric_type,
+          fabricId: roll.fabric_id,
+          rollLength: roll.roll_length,
+          qrGeneratedAt: new Date().toISOString(),
+          productionPurpose: 'customer_order',
+          customerOrderId: currentOrder.id,
+          customerOrderNumber: currentOrder.internal_order_number,
+          customerName: currentOrder.customers?.name,
+          color: roll.customer_color || 'Natural',
+          allocationStatus: `Allocated to ${currentOrder.customers?.name || 'Customer Order'}`,
+          detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/rolls/${roll.id}`,
+          additionalData: {
+            rollId: roll.id
+          }
+        }
+
         const { data: updatedRoll, error: rollUpdateError } = await supabase
           .from('fabric_rolls')
           .update({
@@ -259,6 +282,7 @@ export default function RollAllocationModal({
             roll_status: newStatus,
             customer_order_id: currentOrder.id,
             customer_order_item_id: orderItemId,
+            qr_code: JSON.stringify(enrichedQrData),
             updated_at: new Date().toISOString()
           })
           .eq('id', selectedRoll.rollId)

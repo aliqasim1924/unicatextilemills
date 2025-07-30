@@ -114,9 +114,12 @@ export const batchUtils = {
     fabricType: 'base_fabric' | 'finished_fabric'
     fabricId: string
     rollLength: number
+    rollId?: string
   }) => {
-    // Generate unique ID for this QR code (for download URL)
-    const qrId = `qr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    // Use rollId for direct API lookup if provided, otherwise use download URL
+    const detailsUrl = rollData.rollId
+      ? `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/rolls/${rollData.rollId}`
+      : `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/qr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     
     return {
       type: 'fabric_roll',
@@ -126,12 +129,12 @@ export const batchUtils = {
       fabricId: rollData.fabricId,
       rollLength: rollData.rollLength,
       qrGeneratedAt: new Date().toISOString(),
-      
-      // Download URL for PDF/text file generation
-      detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/qr/download/${qrId}`,
-      
+      productionPurpose: 'stock_building',
+      color: 'Natural',
+      allocationStatus: 'Available for stock building',
+      detailsUrl,
       additionalData: {
-        qrId: qrId
+        rollId: rollData.rollId
       }
     }
   },
@@ -165,7 +168,7 @@ export const batchUtils = {
         const rollNumber = `${batch.batch_number}-R${i.toString().padStart(3, '0')}`
         const actualLength = i === rollCount ? totalQuantity % rollLength || rollLength : rollLength
         
-        // Generate QR code data
+        // Generate QR code data (will be updated with rollId after creation)
         const qrData = batchUtils.generateQRCodeData({
           rollNumber,
           batchId,
@@ -194,6 +197,26 @@ export const batchUtils = {
       
       if (error) {
         throw new Error(`Failed to create rolls: ${error.message}`)
+      }
+      
+      // Update QR codes with rollId for direct API lookup
+      for (const roll of data) {
+        const qrData = JSON.parse(roll.qr_code)
+        const updatedQrData = {
+          ...qrData,
+          detailsUrl: `${process.env.NEXT_PUBLIC_QR_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/api/rolls/${roll.id}`,
+          additionalData: {
+            ...qrData.additionalData,
+            rollId: roll.id
+          }
+        }
+        
+        await supabase
+          .from('fabric_rolls')
+          .update({
+            qr_code: JSON.stringify(updatedQrData)
+          })
+          .eq('id', roll.id)
       }
       
       // Convert to RollData format
