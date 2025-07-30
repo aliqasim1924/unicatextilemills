@@ -346,9 +346,23 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
           }
 
           // Calculate allocation plan for this specific item
-          const availableStock = fabric.stock_quantity || 0
-          const stockAllocated = Math.min(orderItem.quantity_ordered, availableStock)
-          const productionRequired = Math.max(0, orderItem.quantity_ordered - availableStock)
+          // Get color-specific available stock
+          const { data: colorRolls, error: colorError } = await supabase
+            .from('fabric_rolls')
+            .select('remaining_length')
+            .eq('fabric_id', fabric.id)
+            .eq('fabric_type', 'finished_fabric')
+            .eq('roll_status', 'available')
+            .gt('remaining_length', 0)
+            .eq('customer_color', orderItem.color)
+
+          if (colorError) {
+            console.error('Error fetching color-specific stock:', colorError)
+          }
+
+          const colorSpecificStock = colorRolls?.reduce((sum, roll) => sum + roll.remaining_length, 0) || 0
+          const stockAllocated = Math.min(orderItem.quantity_ordered, colorSpecificStock)
+          const productionRequired = Math.max(0, orderItem.quantity_ordered - colorSpecificStock)
           let baseFabricAvailable = fabric.base_fabrics?.stock_quantity || 0
           let needsWeavingProduction = false
           let baseFabricShortage = 0

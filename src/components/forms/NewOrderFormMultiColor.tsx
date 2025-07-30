@@ -243,10 +243,37 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
     return formData.order_items.reduce((total, item) => total + (item.quantity_ordered || 0), 0)
   }
 
-  const calculateAllocationPlan = (fabric: FinishedFabric, orderQuantity: number): AllocationPlan => {
-    const availableStock = fabric.stock_quantity
+  // Helper function to get color-specific available stock
+  const getColorSpecificAvailableStock = async (fabricId: string, color: string): Promise<number> => {
+    const { data: rolls, error } = await supabase
+      .from('fabric_rolls')
+      .select('remaining_length')
+      .eq('fabric_id', fabricId)
+      .eq('fabric_type', 'finished_fabric')
+      .eq('roll_status', 'available')
+      .gt('remaining_length', 0)
+      .eq('customer_color', color);
+
+    if (error) {
+      console.error("Error fetching fabric rolls by color:", error);
+      return 0;
+    }
+
+    return rolls.reduce((sum, roll) => sum + roll.remaining_length, 0);
+  };
+
+  const calculateAllocationPlan = async (fabric: FinishedFabric, orderQuantity: number, color: string): Promise<AllocationPlan> => {
+    const availableStock = await getColorSpecificAvailableStock(fabric.id, color)
     const stockAllocated = Math.min(orderQuantity, availableStock)
     const productionRequired = Math.max(0, orderQuantity - availableStock)
+    
+    console.log('=== ALLOCATION CALCULATION (Multi-Color) ===')
+    console.log('Fabric:', fabric.name)
+    console.log('Order Quantity:', orderQuantity)
+    console.log('Order Color:', color)
+    console.log('Color-Specific Available Stock:', availableStock)
+    console.log('Stock Allocated:', stockAllocated)
+    console.log('Production Required:', productionRequired)
     
     let baseFabricAvailable = 0
     let needsWeavingProduction = false
@@ -261,7 +288,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       baseFabricShortage = productionRequired
     }
     
-    return {
+    const result = {
       stock_allocated: stockAllocated,
       production_required: productionRequired,
       needs_coating_production: productionRequired > 0,
@@ -269,6 +296,11 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       base_fabric_available: baseFabricAvailable,
       base_fabric_required: baseFabricShortage // Only the shortage amount
     }
+    
+    console.log('Final Allocation Plan:', result)
+    console.log('=== END ALLOCATION CALCULATION (Multi-Color) ===')
+    
+    return result
   }
 
   const createProductionOrders = async (orderId: string, orderItemId: string, fabric: FinishedFabric, allocationPlan: AllocationPlan, customerColor: string) => {
@@ -340,7 +372,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
     return { weavingOrderId, hasWeaving: allocationPlan.needs_weaving_production, hasCoating: allocationPlan.needs_coating_production, messages: productionMessages }
   }
 
-  const updateStockQuantities = async (fabric: FinishedFabric, allocationPlan: AllocationPlan, orderId: string) => {
+  const updateStockQuantities = async (fabric: FinishedFabric, allocationPlan: AllocationPlan, orderId: string, color: string) => {
     if (allocationPlan.stock_allocated > 0) {
       // Update finished fabric stock
       const { error } = await supabase
@@ -354,7 +386,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         throw new Error(`Failed to update stock: ${error.message}`)
       }
 
-      // Log stock movement
+      // Log stock movement with color information
       await supabase
         .from('stock_movements')
         .insert([{
@@ -364,7 +396,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           quantity: -allocationPlan.stock_allocated,
           reference_id: orderId,
           reference_type: 'customer_order',
-          notes: 'Stock allocated to customer order'
+          notes: `Stock allocated to customer order - Color: ${color}`
         }])
     }
   }
@@ -391,7 +423,7 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
         quantity_ordered: calculateTotalQuantity(),
         quantity_allocated: 0,
         due_date: formData.due_date,
-        order_status: 'pending',
+        order_status: 'pending', // Orders start as pending, not confirmed
         priority_override: formData.priority_override,
         notes: formData.notes,
         color: formData.order_items[0]?.color || null // Keep for backward compatibility
@@ -420,16 +452,16 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
           throw new Error(`Fabric not found for item: ${item.finished_fabric_id}`)
         }
 
-        // Calculate allocation plan for this item
-        const allocationPlan = calculateAllocationPlan(fabric, item.quantity_ordered)
-        totalStockAllocated += allocationPlan.stock_allocated
+        // Calculate allocation plan for display purposes only (no auto-allocation)
+        const allocationPlan = await calculateAllocationPlan(fabric, item.quantity_ordered, item.color || '')
+        totalStockAllocated += 0 // No automatic allocation - will be done manually
 
         orderItemsWithAllocations.push({
           customer_order_id: customerOrder.id,
           finished_fabric_id: item.finished_fabric_id,
           color: item.color,
           quantity_ordered: item.quantity_ordered,
-          quantity_allocated: allocationPlan.stock_allocated,
+          quantity_allocated: 0, // No automatic allocation - will be done manually
           unit_price: item.unit_price,
           notes: item.notes
         })
@@ -449,29 +481,29 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       
       console.log('Created order items:', insertedItems);
 
-      // Update the main order with total allocated quantity
+      // Update the main order with total allocated quantity (0 for manual allocation)
       await supabase
         .from('customer_orders')
-        .update({ quantity_allocated: totalStockAllocated })
+        .update({ quantity_allocated: 0 }) // No automatic allocation
         .eq('id', customerOrder.id)
 
-      // Log stock allocation for each item (no production orders created yet)
+      // Log that stock allocation will be done manually for each item
       for (let i = 0; i < formData.order_items.length; i++) {
         const item = formData.order_items[i]
         const fabric = fabrics.find(f => f.id === item.finished_fabric_id)!
-        const allocationPlan = calculateAllocationPlan(fabric, item.quantity_ordered)
+        const allocationPlan = await calculateAllocationPlan(fabric, item.quantity_ordered, item.color || '')
 
-        // Log initial allocation if stock was allocated (but don't update stock yet)
+        // Log that allocation will be done manually
         if (allocationPlan.stock_allocated > 0) {
           await logBusinessEvent.customerOrder.stockAllocated(customerOrder.id, {
-            quantity: allocationPlan.stock_allocated,
-            remaining: allocationPlan.production_required,
+            quantity: 0, // No automatic allocation
+            remaining: item.quantity_ordered,
             allocationDate: new Date().toISOString()
           })
         }
 
         // Note: Production orders will be created only when order is confirmed
-        // Note: Stock will be allocated only when order is confirmed
+        // Note: Stock allocation will be done manually through roll selection
       }
 
       // Log business event
