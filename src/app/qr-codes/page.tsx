@@ -90,7 +90,8 @@ export default function QRCodesPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'fabric_rolls' },
-        () => {
+        (payload) => {
+          console.log('Real-time fabric_rolls change detected:', payload);
           loadAllRolls();
         }
       )
@@ -104,6 +105,7 @@ export default function QRCodesPage() {
   }, []);
 
   const loadAllRolls = async () => {
+    console.log('Loading all rolls...');
     setLoading(true)
     try {
       // Fetch fabric rolls, excluding archived
@@ -129,11 +131,14 @@ export default function QRCodesPage() {
         .eq('archived', false)
         .order('created_at', { ascending: false })
       if (rollsError) {
+        console.error('Error loading rolls:', rollsError);
         setFabricRolls([])
       } else {
+        console.log(`Loaded ${rollsData?.length || 0} rolls`);
         setFabricRolls(rollsData || [])
       }
     } catch (error) {
+      console.error('Error in loadAllRolls:', error);
       setFabricRolls([])
     } finally {
       setLoading(false)

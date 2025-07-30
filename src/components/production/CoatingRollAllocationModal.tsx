@@ -35,7 +35,7 @@ interface SelectedRoll {
   loomNumber: string
   rollLength: number
   quantityUsed: number
-  qualityGrade: string
+  qualityGrade: 'A' | 'B' | 'C'
 }
 
 export default function CoatingRollAllocationModal({
@@ -46,6 +46,7 @@ export default function CoatingRollAllocationModal({
 }: CoatingRollAllocationModalProps) {
   const [availableRolls, setAvailableRolls] = useState<LoomRollData[]>([])
   const [selectedRolls, setSelectedRolls] = useState<SelectedRoll[]>([])
+  const [originalRolls, setOriginalRolls] = useState<LoomRollData[]>([])
   const [loading, setLoading] = useState(false)
   const [pin, setPin] = useState('')
   const [showPinStep, setShowPinStep] = useState(false)
@@ -73,6 +74,7 @@ export default function CoatingRollAllocationModal({
 
   const resetForm = () => {
     setSelectedRolls([])
+    setOriginalRolls([])
     setPin('')
     setShowPinStep(false)
     setPinError('')
@@ -88,23 +90,21 @@ export default function CoatingRollAllocationModal({
       qualityGrade: roll.qualityGrade
     }
     setSelectedRolls([...selectedRolls, newRoll])
+    setOriginalRolls([...originalRolls, roll])
     setAvailableRolls(availableRolls.filter(r => r.id !== roll.id))
   }
 
   const removeRoll = (index: number) => {
     const removedRoll = selectedRolls[index]
+    const originalRoll = originalRolls[index]
     
-    // Find the original roll to add back to available rolls
-    const originalRollData: LoomRollData = {
-      id: removedRoll.loomRollId,
-      rollNumber: removedRoll.rollNumber,
-      loomNumber: removedRoll.loomNumber,
-      rollLength: removedRoll.rollLength,
-      qualityGrade: removedRoll.qualityGrade
+    // Add the original roll back to available rolls
+    if (originalRoll) {
+      setAvailableRolls([...availableRolls, originalRoll])
     }
     
-    setAvailableRolls([...availableRolls, originalRollData])
     setSelectedRolls(selectedRolls.filter((_, i) => i !== index))
+    setOriginalRolls(originalRolls.filter((_, i) => i !== index))
   }
 
   const updateRoll = (index: number, field: keyof SelectedRoll, value: any) => {
@@ -176,6 +176,28 @@ export default function CoatingRollAllocationModal({
         'Production Manager'
       )
 
+      // Create a production batch for this coating production
+      const { numberingUtils } = await import('@/lib/utils/numberingUtils')
+      const batchNumber = await numberingUtils.generateBatchNumber('coating')
+      
+      const { data: batch, error: batchError } = await supabase
+        .from('production_batches')
+        .insert({
+          batch_number: batchNumber,
+          production_order_id: productionOrder.id,
+          production_type: 'coating',
+          planned_quantity: productionOrder.quantity_required,
+          actual_a_grade_quantity: 0, // Will be updated when production completes
+          batch_status: 'in_progress',
+          notes: `Coating production started with ${selectedRolls.length} base fabric rolls`
+        })
+        .select('id')
+        .single()
+
+      if (batchError) {
+        throw new Error(`Failed to create production batch: ${batchError.message}`)
+      }
+
       // Update production order status to in_progress
       await supabase
         .from('production_orders')
@@ -186,18 +208,18 @@ export default function CoatingRollAllocationModal({
         })
         .eq('id', productionOrder.id)
 
-      // Archive base-fabric rolls for this batch by calling the new API
-      // Assume productionOrder has a batch_id or fetch it if needed
-      if (productionOrder.batch_id) {
+      // Archive base-fabric rolls for this batch
+      if (batch?.id) {
         await fetch('/api/production/coating-start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productionOrderId: productionOrder.id, batchId: productionOrder.batch_id })
+          body: JSON.stringify({ productionOrderId: productionOrder.id, batchId: batch.id })
         })
       }
 
       console.log('Roll allocation completed successfully:', {
         productionOrder: productionOrder.internal_order_number,
+        batchNumber: batchNumber,
         rollsAllocated: selectedRolls.length,
         totalQuantity: calculateTotalAllocated()
       })

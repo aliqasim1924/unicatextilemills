@@ -46,6 +46,13 @@ interface Order {
     color: string
     stock_quantity: number
   }
+  customer_order_items?: Array<{
+    id: string
+    color: string
+    quantity_ordered: number
+    quantity_allocated: number
+    finished_fabric_id: string
+  }>
 }
 
 interface RollAllocationModalProps {
@@ -96,7 +103,14 @@ export default function RollAllocationModal({
         .select(`
           *,
           customers (name),
-          finished_fabrics (name, color, stock_quantity)
+          finished_fabrics (name, color, stock_quantity),
+          customer_order_items (
+            id,
+            color,
+            quantity_ordered,
+            quantity_allocated,
+            finished_fabric_id
+          )
         `)
         .in('order_status', ['confirmed', 'partially_allocated', 'in_production', 'production_complete'])
         .order('created_at', { ascending: true })
@@ -113,6 +127,20 @@ export default function RollAllocationModal({
   const loadFabricRolls = async (fabricId: string) => {
     try {
       setLoading(true)
+      
+      // Determine the color to filter by
+      let targetColor = 'Natural'
+      if (currentOrder?.customer_order_items && currentOrder.customer_order_items.length > 0) {
+        const itemNeedingAllocation = currentOrder.customer_order_items.find(item => 
+          item.quantity_allocated < item.quantity_ordered
+        )
+        if (itemNeedingAllocation) {
+          targetColor = itemNeedingAllocation.color
+        }
+      } else if (currentOrder?.finished_fabrics?.color) {
+        targetColor = currentOrder.finished_fabrics.color
+      }
+      
       const { data, error } = await supabase
         .from('fabric_rolls')
         .select(`
@@ -122,6 +150,7 @@ export default function RollAllocationModal({
         .eq('fabric_type', 'finished_fabric')
         .eq('fabric_id', fabricId)
         .eq('roll_status', 'available')
+        .eq('customer_color', targetColor)
         .order('quality_grade', { ascending: true })
         .order('created_at', { ascending: true })
 
@@ -137,7 +166,10 @@ export default function RollAllocationModal({
   const handleOrderSelect = (order: Order) => {
     setCurrentOrder(order)
     setSelectedRolls([])
-    loadFabricRolls(order.finished_fabric_id)
+    // Load fabric rolls after setting current order so we can filter by color
+    setTimeout(() => {
+      loadFabricRolls(order.finished_fabric_id)
+    }, 100)
   }
 
   const handleRollSelect = (roll: FabricRoll) => {
@@ -201,6 +233,17 @@ export default function RollAllocationModal({
       setAllocating(true)
       const totalAllocated = getTotalAllocated()
       
+      // Determine the order item to allocate to
+      let orderItemId = null
+      if (currentOrder.customer_order_items && currentOrder.customer_order_items.length > 0) {
+        const itemNeedingAllocation = currentOrder.customer_order_items.find(item => 
+          item.quantity_allocated < item.quantity_ordered
+        )
+        if (itemNeedingAllocation) {
+          orderItemId = itemNeedingAllocation.id
+        }
+      }
+      
       // Update each selected roll
       for (const selectedRoll of selectedRolls) {
         const roll = fabricRolls.find(r => r.id === selectedRoll.rollId)
@@ -215,6 +258,7 @@ export default function RollAllocationModal({
             remaining_length: newRemainingLength,
             roll_status: newStatus,
             customer_order_id: currentOrder.id,
+            customer_order_item_id: orderItemId,
             updated_at: new Date().toISOString()
           })
           .eq('id', selectedRoll.rollId)
@@ -223,6 +267,8 @@ export default function RollAllocationModal({
         if (rollUpdateError) {
           // Optionally, keep a single error log for production
           console.error('Error updating roll status during allocation:', rollUpdateError.message || rollUpdateError);
+        } else {
+          console.log(`Successfully updated roll ${selectedRoll.rollNumber} to status: ${newStatus}, remaining: ${newRemainingLength}m`);
         }
 
         // Log allocation event
@@ -244,7 +290,24 @@ export default function RollAllocationModal({
         }
       }
 
-      // Update customer order
+      // Update the specific order item if we have one
+      if (orderItemId) {
+        const itemNeedingAllocation = currentOrder.customer_order_items?.find(item => 
+          item.quantity_allocated < item.quantity_ordered
+        )
+        if (itemNeedingAllocation) {
+          const newItemAllocated = itemNeedingAllocation.quantity_allocated + totalAllocated
+          await supabase
+            .from('customer_order_items')
+            .update({
+              quantity_allocated: newItemAllocated,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', orderItemId)
+        }
+      }
+
+      // Update customer order - use the correct workflow statuses
       const newTotalAllocated = currentOrder.quantity_allocated + totalAllocated
       const newStatus = newTotalAllocated >= currentOrder.quantity_ordered ? 'fully_allocated' : 'partially_allocated'
 

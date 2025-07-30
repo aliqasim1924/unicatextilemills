@@ -458,6 +458,7 @@ export default function ProductionPage() {
       // Check if this completion enables any pending orders to be allocated
       const completedOrder = productionOrders.find(o => o.id === orderId)
       if (completedOrder && completedOrder.finished_fabric_id) {
+        console.log('Production completion - checking for pending orders to allocate for fabric_id:', completedOrder.finished_fabric_id);
         try {
           const allocatedOrders = await checkPendingOrdersForAllocation(completedOrder.finished_fabric_id)
           
@@ -503,6 +504,15 @@ export default function ProductionPage() {
         .order('created_at', { ascending: true }) // FIFO allocation
 
       if (ordersError || !pendingOrders) return []
+      
+      console.log(`Found ${pendingOrders.length} pending orders for fabric_id ${fabricId}:`, pendingOrders.map(o => ({
+        id: o.id,
+        internal_order_number: o.internal_order_number,
+        color: o.color,
+        quantity_ordered: o.quantity_ordered,
+        quantity_allocated: o.quantity_allocated,
+        order_status: o.order_status
+      })));
 
       let availableStock = fabric.stock_quantity
       const allocations: Array<{orderId: string, allocation: number}> = []
@@ -529,16 +539,63 @@ export default function ProductionPage() {
         if (!order) continue
 
         let allocationLeft = allocation;
-        // Fetch available rolls for this finished fabric (FIFO)
+        
+        // Get the order details to determine the correct color for allocation
+        const { data: orderDetails, error: orderDetailsError } = await supabase
+          .from('customer_orders')
+          .select(`
+            *,
+            customer_order_items (
+              id,
+              color,
+              quantity_ordered,
+              quantity_allocated
+            )
+          `)
+          .eq('id', orderId)
+          .single();
+        
+        if (orderDetailsError) {
+          console.error('Error fetching order details for allocation:', orderDetailsError);
+          continue;
+        }
+        
+        // Determine the target color for allocation
+        let targetColor = orderDetails.finished_fabrics?.color || 'Natural';
+        let orderItemId = null;
+        
+        if (orderDetails.customer_order_items && orderDetails.customer_order_items.length > 0) {
+          const itemNeedingAllocation = orderDetails.customer_order_items.find((item: any) => 
+            item.quantity_allocated < item.quantity_ordered
+          );
+          if (itemNeedingAllocation) {
+            targetColor = itemNeedingAllocation.color;
+            orderItemId = itemNeedingAllocation.id;
+          }
+        }
+        
+        console.log(`Auto-allocation debug - Order ${order.internal_order_number}: target color = ${targetColor}`);
+        
+        // Fetch available rolls for this finished fabric and color (FIFO)
         const { data: availableRolls, error: rollsError } = await supabase
           .from('fabric_rolls')
           .select('*')
           .eq('fabric_id', fabricId)
           .eq('fabric_type', 'finished_fabric')
           .eq('roll_status', 'available')
+          .eq('customer_color', targetColor)
           .gt('remaining_length', 0)
           .order('created_at', { ascending: true });
         if (rollsError) throw rollsError;
+        
+        console.log(`Found ${availableRolls?.length || 0} available rolls for fabric_id ${fabricId}, color ${targetColor}:`, availableRolls?.map(r => ({
+          id: r.id,
+          roll_number: r.roll_number,
+          customer_color: r.customer_color,
+          remaining_length: r.remaining_length,
+          quality_grade: r.quality_grade
+        })) || []);
+        
         if (!availableRolls || availableRolls.length === 0) throw new Error('No available rolls found for allocation');
         // Allocate rolls
         for (const roll of availableRolls) {
@@ -552,6 +609,7 @@ export default function ProductionPage() {
               remaining_length: newRemaining,
               roll_status: newStatus,
               customer_order_id: orderId,
+              customer_order_item_id: orderItemId,
               updated_at: new Date().toISOString(),
             })
             .eq('id', roll.id);
@@ -560,6 +618,23 @@ export default function ProductionPage() {
             console.error('Error updating roll status during auto-allocation:', rollUpdateError.message || rollUpdateError);
           }
           allocationLeft -= allocFromThisRoll;
+        }
+
+        // Update the specific order item if we have one
+        if (orderItemId) {
+          const itemNeedingAllocation = orderDetails.customer_order_items?.find((item: any) => 
+            item.quantity_allocated < item.quantity_ordered
+          );
+          if (itemNeedingAllocation) {
+            const newItemAllocated = itemNeedingAllocation.quantity_allocated + allocation;
+            await supabase
+              .from('customer_order_items')
+              .update({
+                quantity_allocated: newItemAllocated,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', orderItemId);
+          }
         }
 
         const newTotalAllocated = (order.quantity_allocated || 0) + allocation

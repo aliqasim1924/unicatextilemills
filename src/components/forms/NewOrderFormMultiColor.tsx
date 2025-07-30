@@ -383,21 +383,26 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       const internalOrderNumber = await numberingUtils.generateOrderNumber()
       
       // Create customer order
+      const orderData = {
+        internal_order_number: internalOrderNumber,
+        customer_po_number: formData.customer_po_number,
+        customer_id: formData.customer_id,
+        finished_fabric_id: formData.order_items[0]?.finished_fabric_id || null, // Keep for backward compatibility
+        quantity_ordered: calculateTotalQuantity(),
+        quantity_allocated: 0,
+        due_date: formData.due_date,
+        order_status: 'pending',
+        priority_override: formData.priority_override,
+        notes: formData.notes,
+        color: formData.order_items[0]?.color || null // Keep for backward compatibility
+      }
+      
+      console.log('Creating customer order with data:', orderData);
+      console.log('Order items:', formData.order_items);
+      
       const { data: customerOrder, error: orderError } = await supabase
         .from('customer_orders')
-        .insert({
-          internal_order_number: internalOrderNumber,
-          customer_po_number: formData.customer_po_number,
-          customer_id: formData.customer_id,
-          finished_fabric_id: formData.order_items[0]?.finished_fabric_id || null, // Keep for backward compatibility
-          quantity_ordered: calculateTotalQuantity(),
-          quantity_allocated: 0,
-          due_date: formData.due_date,
-          order_status: 'pending',
-          priority_override: formData.priority_override,
-          notes: formData.notes,
-          color: formData.order_items[0]?.color || null // Keep for backward compatibility
-        })
+        .insert(orderData)
         .select()
         .single()
 
@@ -431,6 +436,8 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       }
 
       // Insert order items
+      console.log('Creating order items with data:', orderItemsWithAllocations);
+      
       const { data: insertedItems, error: itemsError } = await supabase
         .from('customer_order_items')
         .insert(orderItemsWithAllocations)
@@ -439,6 +446,8 @@ export default function NewOrderFormMultiColor({ isOpen, onClose, onOrderCreated
       if (itemsError) {
         throw new Error(`Failed to create order items: ${itemsError.message}`)
       }
+      
+      console.log('Created order items:', insertedItems);
 
       // Update the main order with total allocated quantity
       await supabase

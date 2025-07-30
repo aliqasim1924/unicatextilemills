@@ -29,6 +29,13 @@ interface Order {
     color: string
     stock_quantity: number
   }
+  customer_order_items?: Array<{
+    id: string
+    color: string
+    quantity_ordered: number
+    quantity_allocated: number
+    finished_fabric_id: string
+  }>
 }
 
 interface StockAllocationModalProps {
@@ -65,7 +72,14 @@ export default function StockAllocationModal({
         .select(`
           *,
           customers (name),
-          finished_fabrics (name, color, stock_quantity)
+          finished_fabrics (name, color, stock_quantity),
+          customer_order_items (
+            id,
+            color,
+            quantity_ordered,
+            quantity_allocated,
+            finished_fabric_id
+          )
         `)
         .in('order_status', ['pending', 'partially_allocated', 'confirmed', 'awaiting_production', 'in_production', 'production_complete'])
         .order('created_at', { ascending: true })
@@ -80,13 +94,32 @@ export default function StockAllocationModal({
   }
 
   const handleAllocateStock = (order: Order) => {
-    const availableStock = order.finished_fabrics?.stock_quantity || 0
-    const remainingQuantity = order.quantity_ordered - order.quantity_allocated
-    const maxAllocation = Math.min(availableStock, remainingQuantity)
-    
-    setSelectedOrder(order)
-    setAllocationAmount(maxAllocation)
-    setShowPinModal(true)
+    // For multi-color orders, we need to check each order item
+    if (order.customer_order_items && order.customer_order_items.length > 0) {
+      // Find the order item that needs allocation
+      const itemNeedingAllocation = order.customer_order_items.find(item => 
+        item.quantity_allocated < item.quantity_ordered
+      )
+      
+      if (itemNeedingAllocation) {
+        const availableStock = order.finished_fabrics?.stock_quantity || 0
+        const remainingQuantity = itemNeedingAllocation.quantity_ordered - itemNeedingAllocation.quantity_allocated
+        const maxAllocation = Math.min(availableStock, remainingQuantity)
+        
+        setSelectedOrder(order)
+        setAllocationAmount(maxAllocation)
+        setShowPinModal(true)
+      }
+    } else {
+      // Fallback for single-color orders
+      const availableStock = order.finished_fabrics?.stock_quantity || 0
+      const remainingQuantity = order.quantity_ordered - order.quantity_allocated
+      const maxAllocation = Math.min(availableStock, remainingQuantity)
+      
+      setSelectedOrder(order)
+      setAllocationAmount(maxAllocation)
+      setShowPinModal(true)
+    }
   }
 
   const processAllocation = async () => {
@@ -102,7 +135,30 @@ export default function StockAllocationModal({
     try {
       setAllocatingOrderId(selectedOrder.id)
       let allocationLeft = allocationAmount;
+      
+      // Determine the color to allocate - use order item color if available
+      let targetColor = selectedOrder.finished_fabrics?.color || 'Natural'
+      let orderItemId = null
+      
+      console.log('Allocation debug - Order items:', selectedOrder.customer_order_items);
+      
+      if (selectedOrder.customer_order_items && selectedOrder.customer_order_items.length > 0) {
+        const itemNeedingAllocation = selectedOrder.customer_order_items.find(item => 
+          item.quantity_allocated < item.quantity_ordered
+        )
+        if (itemNeedingAllocation) {
+          targetColor = itemNeedingAllocation.color
+          orderItemId = itemNeedingAllocation.id
+          console.log('Allocation debug - Found item needing allocation:', itemNeedingAllocation);
+          console.log('Allocation debug - Target color:', targetColor);
+        }
+      }
+      
+      console.log('Allocation debug - Final target color:', targetColor);
+      
       // 1. Fetch available rolls for this finished fabric and color (FIFO)
+      console.log('Allocation debug - Fetching rolls for fabric_id:', selectedOrder.finished_fabric_id, 'color:', targetColor);
+      
       const { data: availableRolls, error: rollsError } = await supabase
         .from('fabric_rolls')
         .select('*')
@@ -110,10 +166,21 @@ export default function StockAllocationModal({
         .eq('fabric_type', 'finished_fabric')
         .eq('roll_status', 'available')
         .gt('remaining_length', 0)
-        .eq('customer_color', selectedOrder.finished_fabrics?.color)
+        .eq('customer_color', targetColor)
         .order('created_at', { ascending: true });
       if (rollsError) throw rollsError;
-      if (!availableRolls || availableRolls.length === 0) throw new Error('No available rolls found for this color');
+      
+      console.log('Allocation debug - Available rolls found:', availableRolls?.length || 0);
+      if (availableRolls && availableRolls.length > 0) {
+        console.log('Allocation debug - First roll details:', {
+          id: availableRolls[0].id,
+          roll_number: availableRolls[0].roll_number,
+          customer_color: availableRolls[0].customer_color,
+          remaining_length: availableRolls[0].remaining_length
+        });
+      }
+      
+      if (!availableRolls || availableRolls.length === 0) throw new Error(`No available rolls found for color: ${targetColor}`);
       // 2. Allocate rolls
       for (const roll of availableRolls) {
         if (allocationLeft <= 0) break;
@@ -126,12 +193,15 @@ export default function StockAllocationModal({
             remaining_length: newRemaining,
             roll_status: newStatus,
             customer_order_id: selectedOrder.id,
+            customer_order_item_id: orderItemId,
             updated_at: new Date().toISOString(),
           })
           .eq('id', roll.id);
         if (rollUpdateError) {
           // Optionally, keep a single error log for production
           console.error('Error updating roll status during allocation:', rollUpdateError.message || rollUpdateError);
+        } else {
+          console.log(`Successfully updated roll ${roll.roll_number} to status: ${newStatus}, remaining: ${newRemaining}m`);
         }
         // Log stock movement for this roll
         const { error: movementError } = await supabase
@@ -154,6 +224,25 @@ export default function StockAllocationModal({
       }
       // 3. Update order allocation summary
       const newTotalAllocated = selectedOrder.quantity_allocated + allocationAmount;
+      
+      // Update the specific order item if we have one
+      if (orderItemId) {
+        const itemNeedingAllocation = selectedOrder.customer_order_items?.find(item => 
+          item.quantity_allocated < item.quantity_ordered
+        )
+        if (itemNeedingAllocation) {
+          const newItemAllocated = itemNeedingAllocation.quantity_allocated + allocationAmount
+          await supabase
+            .from('customer_order_items')
+            .update({
+              quantity_allocated: newItemAllocated,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', orderItemId)
+        }
+      }
+      
+      // Update main order status - use the correct workflow statuses
       const newStatus = newTotalAllocated >= selectedOrder.quantity_ordered 
         ? 'fully_allocated' 
         : 'partially_allocated';

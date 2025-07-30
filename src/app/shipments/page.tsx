@@ -15,13 +15,24 @@ import QRCodeDisplay from '@/components/ui/QRCodeDisplay'
 interface FabricRoll {
   roll_number: string
   roll_length: number
+  remaining_length?: number
   qr_code: string
   fabric_type: string
-  fabric_name?: string
+  customer_color?: string
+  roll_status?: string
+  quality_grade?: string
+  created_at?: string
   production_batches?: {
     batch_number: string
     production_type: string
   }
+  finished_fabrics?: {
+    name: string
+    color: string
+  } | null
+  base_fabrics?: {
+    name: string
+  } | null
   parsed_qr_code?: any // Add this line for parsed QR code JSON
 }
 
@@ -72,9 +83,27 @@ export default function ShipmentsPage() {
     loadShipments()
   }, [])
 
-  const loadShipments = async () => {
+      const loadShipments = async () => {
     try {
       setLoading(true)
+      
+      // First check if there are any shipments at all
+      const { data: shipmentCount, error: countError } = await supabase
+        .from('shipments')
+        .select('id', { count: 'exact' })
+      
+      if (countError) {
+        console.error('Error checking shipments count:', countError)
+        setShipments([])
+        return
+      }
+      
+      if (!shipmentCount || shipmentCount.length === 0) {
+        console.log('No shipments found')
+        setShipments([])
+        return
+      }
+      
       // Load existing shipments with QR codes for each roll
       const { data: shipments, error: shipmentsError } = await supabase
         .from('shipments')
@@ -97,18 +126,18 @@ export default function ShipmentsPage() {
               roll_length,
               qr_code,
               fabric_type,
-              production_batches!batch_id (
-                batch_number,
-                production_type
-              )
+              roll_status
             )
           )
         `)
         .order('shipped_date', { ascending: false })
+      
       if (shipmentsError) {
         console.error('Error loading shipments:', shipmentsError)
+        setShipments([])
         return
       }
+      
       // Parse QR code JSON for each roll in shipment_items
       const enrichedShipments = (shipments || []).map(shipment => ({
         ...shipment,
@@ -129,6 +158,7 @@ export default function ShipmentsPage() {
       setShipments(enrichedShipments)
     } catch (error) {
       console.error('Error loading shipments:', error)
+      setShipments([])
     } finally {
       setLoading(false)
     }
@@ -161,6 +191,17 @@ export default function ShipmentsPage() {
       case 'shipped': return 'bg-blue-100 text-blue-800'
       case 'delivered': return 'bg-green-100 text-green-800'
       case 'returned': return 'bg-red-100 text-red-800'
+      case 'available': return 'bg-green-100 text-green-800'
+      case 'allocated': return 'bg-blue-100 text-blue-800'
+      case 'used': return 'bg-purple-100 text-purple-800'
+      default: return 'bg-gray-100 text-gray-800'
+    }
+  }
+
+  const getTypeColor = (type: string) => {
+    switch (type) {
+      case 'base_fabric': return 'bg-orange-100 text-orange-800'
+      case 'finished_fabric': return 'bg-indigo-100 text-indigo-800'
       default: return 'bg-gray-100 text-gray-800'
     }
   }
@@ -337,17 +378,24 @@ export default function ShipmentsPage() {
                 <div className="border-t border-gray-200 p-6 bg-gray-50">
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {shipment.shipment_items?.map((item) => (
-                      <div key={item.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                      <div key={item.id} className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-gray-200">
                         <div className="mb-4">
                           <h4 className="font-semibold text-gray-900 text-sm mb-1">
                             {item.fabric_rolls?.roll_number}
                           </h4>
                           
-                          <div className="space-y-1 text-xs text-gray-600">
-                            <p><strong>Fabric:</strong> {item.fabric_rolls?.fabric_name}</p>
-                            <p><strong>Batch:</strong> {item.fabric_rolls?.production_batches?.batch_number}</p>
-                            <p><strong>Type:</strong> {item.fabric_rolls?.production_batches?.production_type}</p>
-                            <p><strong>Length:</strong> {item.fabric_rolls?.roll_length}m</p>
+                          <div className="flex items-center gap-1 mb-2">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getTypeColor(item.fabric_rolls?.fabric_type || '')}`}>
+                              {item.fabric_rolls?.fabric_type?.replace('_', ' ') || 'Unknown'}
+                            </span>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(item.fabric_rolls?.roll_status || '')}`}>
+                              {item.fabric_rolls?.roll_status || 'Unknown'}
+                            </span>
+                          </div>
+                          
+                                                      <div className="space-y-1 text-xs text-gray-600">
+                              <p><strong>Length:</strong> {item.fabric_rolls?.roll_length}m</p>
+                              <p><strong>Status:</strong> {item.fabric_rolls?.roll_status || 'Unknown'}</p>
                           </div>
                         </div>
                         
@@ -355,17 +403,17 @@ export default function ShipmentsPage() {
                         <div className="flex items-center justify-center mb-4">
                           <QRCodeDisplay 
                             qrData={item.fabric_rolls?.qr_code || ''} 
-                            size={100} 
+                            size={120} 
                             showData={false} 
                           />
                         </div>
                         
-                        <div className="flex space-x-2">
+                        <div className="flex gap-2">
                           <button
                             onClick={() => {
                               try {
                                 const qrData = JSON.parse(item.fabric_rolls?.qr_code || '{}')
-                                const downloadUrl = qrData.url
+                                const downloadUrl = qrData.url || qrData.detailsUrl
                                 if (downloadUrl) {
                                   window.open(downloadUrl, '_blank')
                                 }
@@ -386,7 +434,7 @@ export default function ShipmentsPage() {
                             className="flex-1 px-3 py-2 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center gap-1"
                           >
                             <EyeIcon className="h-3 w-3" />
-                            Details
+                            View
                           </button>
                         </div>
                       </div>

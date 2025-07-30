@@ -130,7 +130,7 @@ export default function StockPage() {
   const fetchFinishedFabricRolls = async () => {
     setLoadingRolls(true)
     try {
-      // Only fetch non-archived, available finished fabric rolls
+      // Fetch all non-archived finished fabric rolls (including allocated ones for display)
       const { data: finishedData, error: finishedError } = await supabase
         .from('fabric_rolls')
         .select('*')
@@ -298,6 +298,7 @@ export default function StockPage() {
   const colorWiseStock = finishedFabricRolls.reduce((acc, roll) => {
     // Only include available rolls with remaining_length > 0
     if (roll.roll_status !== 'available' || (roll.remaining_length || 0) <= 0) return acc;
+    // For finished fabric rolls, use customer_color if available, otherwise use fabric color, fallback to 'Natural'
     const color = roll.customer_color || roll.finished_fabrics?.color || 'Natural';
     const fabricName = roll.finished_fabrics?.name || 'Unknown Fabric';
     const availableLength = roll.remaining_length || 0;

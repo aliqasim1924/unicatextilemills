@@ -364,37 +364,55 @@ export const loomTrackingUtils = {
     }
   },
 
-  // Get available rolls for coating (from linked weaving production)
+  // Get available rolls for coating (from linked weaving production or stock)
   getAvailableRolls: async (productionOrderId: string): Promise<LoomRollData[]> => {
     try {
-      // Get linked weaving production order
-      const { data: linkedOrder, error: linkedError } = await supabase
+      // Get production order details first
+      const { data: productionOrder, error: orderError } = await supabase
         .from('production_orders')
-        .select('linked_production_order_id')
+        .select('linked_production_order_id, finished_fabric_id')
         .eq('id', productionOrderId)
         .single()
 
-      if (linkedError) {
-        throw new Error(`Failed to get linked order: ${linkedError.message}`)
+      if (orderError) {
+        throw new Error(`Failed to get production order: ${orderError.message}`)
       }
 
-      if (linkedOrder?.linked_production_order_id) {
+      if (productionOrder?.linked_production_order_id) {
         // Load loom rolls from linked weaving order
-        return await loomTrackingUtils.getAvailableLoomRolls(linkedOrder.linked_production_order_id)
+        return await loomTrackingUtils.getAvailableLoomRolls(productionOrder.linked_production_order_id)
       } else {
-        // Load all available base fabric rolls from the same fabric type
+        // For manual coating production orders, get base fabric rolls from stock
+        if (!productionOrder?.finished_fabric_id) {
+          throw new Error('No finished fabric ID found in production order')
+        }
+
+        // Get the base fabric ID from the finished fabric
         const { data: finishedFabric, error: fabricError } = await supabase
           .from('finished_fabrics')
           .select('base_fabric_id')
-          .eq('id', productionOrderId)
+          .eq('id', productionOrder.finished_fabric_id)
           .single()
 
         if (fabricError || !finishedFabric?.base_fabric_id) {
           throw new Error(`Failed to get finished fabric: ${fabricError?.message || 'No base fabric found'}`)
         }
 
-        // Load available loom rolls for this base fabric
-        const { data: loomRolls, error: rollsError } = await supabase
+        // First, get all loom roll IDs that are already allocated to coating production
+        const { data: allocatedRollIds, error: allocatedError } = await supabase
+          .from('coating_roll_inputs')
+          .select('loom_roll_id')
+
+        if (allocatedError) {
+          throw new Error(`Failed to get allocated roll IDs: ${allocatedError.message}`)
+        }
+
+        const allocatedIds = allocatedRollIds?.map(item => item.loom_roll_id) || []
+        
+
+
+        // Build the query
+        let query = supabase
           .from('loom_rolls')
           .select(`
             *,
@@ -412,11 +430,16 @@ export const loomTrackingUtils = {
           `)
           .eq('loom_production_details.production_orders.base_fabric_id', finishedFabric.base_fabric_id)
           .eq('roll_status', 'available')
-          .order('created_at', { ascending: true })
+
+        // Execute the query first
+        const { data: allLoomRolls, error: rollsError } = await query.order('created_at', { ascending: true })
 
         if (rollsError) {
           throw new Error(`Failed to get loom rolls: ${rollsError.message}`)
         }
+
+        // Filter out allocated rolls after the query
+        const loomRolls = allLoomRolls?.filter(roll => !allocatedIds.includes(roll.id)) || []
 
         return loomRolls?.map(roll => ({
           id: roll.id,
@@ -674,7 +697,7 @@ export const loomTrackingUtils = {
     // Get production order details to get fabric_id
     const { data: productionOrder, error: orderError } = await supabase
       .from('production_orders')
-      .select('finished_fabric_id, customer_order_id, customer_orders(color)')
+      .select('finished_fabric_id, customer_order_id, customer_color, customer_orders(color)')
       .eq('id', completionData.productionOrderId)
       .single()
 
@@ -851,6 +874,7 @@ export const loomTrackingUtils = {
       .eq('id', completionData.productionOrderId)
       .single()
     if (prodOrderDetails?.customer_order_id) {
+      console.log('Auto-allocation triggered for production order completion - customer_order_id:', prodOrderDetails.customer_order_id);
       await loomTrackingUtils.autoAllocateAGradeRollsToCustomerOrder(prodOrderDetails.customer_order_id)
     }
 
@@ -869,8 +893,8 @@ export const loomTrackingUtils = {
       
       const currentStock = currentFabric?.stock_quantity || 0
       
-      // Get the color from the customer order to update the finished fabric
-      const customerOrderColor = productionOrder.customer_orders?.[0]?.color || null
+      // Get the color from the production order or customer order to update the finished fabric
+      const customerOrderColor = productionOrder.customer_color || productionOrder.customer_orders?.[0]?.color || null
       
       await supabase
         .from('finished_fabrics')
@@ -1234,6 +1258,7 @@ export const loomTrackingUtils = {
     // At the end of completeCoatingProductionWithIndividualRolls
     // Auto-allocate A grade rolls to customer order if present
     if (customerOrderId) {
+      console.log('Auto-allocation triggered for production order completion (individual rolls) - customer_order_id:', customerOrderId);
       await loomTrackingUtils.autoAllocateAGradeRollsToCustomerOrder(customerOrderId)
     }
 
@@ -1252,8 +1277,8 @@ export const loomTrackingUtils = {
       
       const currentStock = currentFabric?.stock_quantity || 0
       
-      // Get the color from the customer order to update the finished fabric
-      const customerOrderColor = productionOrder.customer_orders?.[0]?.color || null
+      // Get the color from the production order or customer order to update the finished fabric
+      const customerOrderColor = productionOrder.customer_color || productionOrder.customer_orders?.[0]?.color || null
       
       await supabase
         .from('finished_fabrics')
@@ -1491,10 +1516,21 @@ export const loomTrackingUtils = {
    * @param customerOrderId - The customer order ID
    */
   autoAllocateAGradeRollsToCustomerOrder: async (customerOrderId: string) => {
-    // Fetch the customer order
+    // Fetch the customer order with order items
     const { data: order, error: orderError } = await supabase
       .from('customer_orders')
-      .select('id, quantity_ordered, quantity_allocated, finished_fabric_id')
+      .select(`
+        id, 
+        quantity_ordered, 
+        quantity_allocated, 
+        finished_fabric_id,
+        customer_order_items (
+          id,
+          color,
+          quantity_ordered,
+          quantity_allocated
+        )
+      `)
       .eq('id', customerOrderId)
       .single()
     if (orderError || !order) throw orderError || new Error('Order not found')
@@ -1502,16 +1538,40 @@ export const loomTrackingUtils = {
     const required = order.quantity_ordered - (order.quantity_allocated || 0)
     if (required <= 0) return // Nothing to allocate
 
-    // Fetch available A grade rolls for this finished fabric
+    // Determine the target color for allocation
+    let targetColor = 'Natural'; // Default fallback
+    let orderItemId = null;
+    
+    if (order.customer_order_items && order.customer_order_items.length > 0) {
+      const itemNeedingAllocation = order.customer_order_items.find((item: any) => 
+        item.quantity_allocated < item.quantity_ordered
+      );
+      if (itemNeedingAllocation) {
+        targetColor = itemNeedingAllocation.color;
+        orderItemId = itemNeedingAllocation.id;
+      }
+    }
+    
+    console.log(`Auto-allocate A grade rolls - Order ${customerOrderId}: target color = ${targetColor}`);
+
+    // Fetch available A grade rolls for this finished fabric and color
     const { data: rolls, error: rollsError } = await supabase
       .from('fabric_rolls')
-      .select('id, roll_length, remaining_length, quality_grade, roll_status')
+      .select('id, roll_length, remaining_length, quality_grade, roll_status, customer_color')
       .eq('fabric_type', 'finished_fabric')
       .eq('fabric_id', order.finished_fabric_id)
       .eq('quality_grade', 'A')
       .eq('roll_status', 'available')
+      .eq('customer_color', targetColor)
       .order('created_at', { ascending: true })
     if (rollsError) throw rollsError
+    
+    console.log(`Auto-allocate A grade rolls - Found ${rolls?.length || 0} rolls for fabric_id ${order.finished_fabric_id}, color ${targetColor}:`, rolls?.map(r => ({
+      id: r.id,
+      customer_color: r.customer_color,
+      remaining_length: r.remaining_length,
+      quality_grade: r.quality_grade
+    })) || []);
 
     let toAllocate = required
     let totalAllocated = 0
@@ -1525,9 +1585,27 @@ export const loomTrackingUtils = {
         .update({
           roll_status: allocQty === roll.remaining_length ? 'allocated' : 'partially_allocated',
           remaining_length: roll.remaining_length - allocQty,
-          customer_order_id: customerOrderId
+          customer_order_id: customerOrderId,
+          customer_order_item_id: orderItemId
         })
         .eq('id', roll.id)
+      // Update the specific order item if we have one
+      if (orderItemId) {
+        const itemNeedingAllocation = order.customer_order_items?.find((item: any) => 
+          item.quantity_allocated < item.quantity_ordered
+        );
+        if (itemNeedingAllocation) {
+          const newItemAllocated = itemNeedingAllocation.quantity_allocated + allocQty;
+          await supabase
+            .from('customer_order_items')
+            .update({
+              quantity_allocated: newItemAllocated,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', orderItemId);
+        }
+      }
+      
       // Update order allocation
       await supabase
         .from('customer_orders')

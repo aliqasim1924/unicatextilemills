@@ -324,7 +324,8 @@ export default function NewProductionOrderForm({ isOpen, onClose, onOrderCreated
       target_completion_date: formData.target_completion_date,
       notes: formData.notes || 'Manual coating order',
       production_sequence: weavingOrderId ? 2 : 1,
-      linked_production_order_id: weavingOrderId
+      linked_production_order_id: weavingOrderId,
+      customer_color: formData.coating_color // Add the coating color
     }
 
     const { data: response, error } = await supabase
