@@ -111,10 +111,16 @@ export default function QRCodesPage() {
       
       console.log('Test query successful, proceeding with full query...');
       
-      // Now try the full query - simplified without relationships
+      // Now try the full query with production_batches join
       const { data: rollsData, error: rollsError } = await supabase
         .from('fabric_rolls')
-        .select('*')
+        .select(`
+          *,
+          production_batches (
+            batch_number,
+            production_type
+          )
+        `)
         .eq('archived', false)
         .order('created_at', { ascending: false })
       
@@ -146,8 +152,10 @@ export default function QRCodesPage() {
         };
 
         const processedRolls = rollsData?.map(roll => {
-          // Batch info
-          const batchInfo = batchMap[roll.batch_id as keyof typeof batchMap] || {};
+          // Batch info from joined production_batches
+          const realBatch = (roll.production_batches as any)?.batch_number;
+          const productionType = (roll.production_batches as any)?.production_type || 'Unknown';
+          
           // Order info
           const orderInfo = roll.customer_order_id ? orderMap[roll.customer_order_id as keyof typeof orderMap] : undefined;
           const orderNumber = orderInfo?.order_number || null;
@@ -167,13 +175,16 @@ export default function QRCodesPage() {
 
           const processedRoll = {
             ...roll,
-            batchNumber: batchInfo.batch_number || roll.batch_id,
-            productionType: batchInfo.production_type || 'Unknown',
+            // pull the real batch number off the joined record (never fall back to the GUID)
+            batchNumber: realBatch ?? '‹missing batch number›',
+            productionType,
             orderNumber,
             customerName,
             baseFabricName,
             qr_data: {
-              productionPurpose: qrData?.productionPurpose || (customerName ? 'customer_order' : 'stock_building'),
+              // always default to stock_building if not a customer order
+              productionPurpose: qrData?.productionPurpose
+                ?? (roll.customer_order_id ? 'customer_order' : 'stock_building'),
               customerOrderNumber: qrData?.customerOrderNumber || orderNumber,
               customerName: qrData?.customerName || customerName,
               baseFabricName: qrData?.baseFabricName || baseFabricName,
@@ -298,7 +309,7 @@ export default function QRCodesPage() {
 
     // Group fabric rolls by batch
   const groupedFabricRolls = filteredRolls.reduce((acc, roll) => {
-    const batchKey = roll.batchNumber || 'Unknown Batch'
+    const batchKey = roll.batchNumber || '‹missing batch number›'
     if (!acc[batchKey]) {
       acc[batchKey] = []
     }
@@ -781,7 +792,7 @@ export default function QRCodesPage() {
                       <strong>Fabric:</strong> {roll.fabric_name}
                     </p>
                     <p className="text-xs text-gray-600 mb-1">
-                      <strong>Batch:</strong> {roll.batchNumber || 'Unknown'}
+                      <strong>Batch:</strong> {roll.batchNumber || '‹missing batch number›'}
                     </p>
                     <p className="text-xs text-gray-600 mb-1">
                       <strong>Length:</strong> {roll.roll_length}m • <strong>Colour:</strong> {
@@ -1003,7 +1014,7 @@ export default function QRCodesPage() {
                   <p className="font-medium text-gray-700">Batch:</p>
                   <p className="text-gray-600">
                     {isFabricRoll(selectedRoll) 
-                      ? selectedRoll.batchNumber || 'Unknown'
+                      ? selectedRoll.batchNumber || '‹missing batch number›'
                       : selectedRoll.batch_number
                     }
                   </p>

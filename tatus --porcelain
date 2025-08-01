@@ -1,0 +1,2 @@
+src/app/qr-codes/page.tsx
+src/pages/api/rolls/[rollId].ts
