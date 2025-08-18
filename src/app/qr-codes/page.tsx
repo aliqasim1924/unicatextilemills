@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import QRCodeDisplay from '@/components/ui/QRCodeDisplay'
-import { QrCodeIcon, EyeIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import { QrCodeIcon, EyeIcon, MagnifyingGlassIcon, PrinterIcon } from '@heroicons/react/24/outline'
 
 interface FabricRoll {
   id: string
@@ -69,6 +69,10 @@ export default function QRCodesPage() {
   const [groupByBatch, setGroupByBatch] = useState(true)
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'fabric_rolls' | 'loom_rolls' | 'all'>('all')
+  const [showPrintModal, setShowPrintModal] = useState(false)
+  const [selectedBatchForPrint, setSelectedBatchForPrint] = useState<string | null>(null)
+  const [selectedRollsForPrint, setSelectedRollsForPrint] = useState<Set<string>>(new Set())
+  const [printLoading, setPrintLoading] = useState(false)
   const subscriptionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -111,7 +115,7 @@ export default function QRCodesPage() {
       
       console.log('Test query successful, proceeding with full query...');
       
-      // Now try the full query with production_batches join
+      // Now try the full query with production_batches and fabric names join
       const { data: rollsData, error: rollsError } = await supabase
         .from('fabric_rolls')
         .select(`
@@ -130,40 +134,45 @@ export default function QRCodesPage() {
       } else {
         console.log(`Loaded ${rollsData?.length || 0} rolls`);
         
-        // Process the data to add customer information
-        const batchMap = {
-          '360e875f-bbbf-485b-a129-a167d7e231ce': { batch_number: 'WEAVING-20250730-001', production_type: 'weaving' },
-          '98a442ac-9fa9-4059-b659-bcfb9e6c2123': { batch_number: 'COATING-20250730-001', production_type: 'coating' },
-          '7698e461-1c18-4cf3-aec2-e5ccde5b2394': { batch_number: 'COATING-20250730-002', production_type: 'coating' },
-          '373ac333-3374-4c3e-80f5-07f2f7912118': { batch_number: 'WEAVING-20250730-001', production_type: 'weaving' },
-          'd4d88110-b634-4916-ae34-b21744c8e92e': { batch_number: 'WEAVING-20250730-002', production_type: 'weaving' },
-          'a5aaa0b6-41e2-463e-ba78-3915f9b4571a': { batch_number: 'COATING-20250730-002', production_type: 'coating' },
-        };
-        const orderMap = {
-          'b2c0b7e9-fb53-481a-86f1-c93305497629': { order_number: 'ORD250730001', customer_id: '1a504ac9-a719-40c3-9eef-6b4b434fe2b2' },
-          '2a103a73-357e-48b7-b8d1-ec7d9afb9949': { order_number: 'ORD250730001', customer_id: '1a504ac9-a719-40c3-9eef-6b4b434fe2b2' },
-        };
-        const customerMap = {
-          '1a504ac9-a719-40c3-9eef-6b4b434fe2b2': 'Unica Plastic Moulders (Pty) Ltd',
-        };
-        const baseFabricMap = {
-          '9b4c7c49-c603-4bfb-ba23-42338cd13ed9': 'Ripstop Canvas (300/96/2)',
-          '9624f323-c2cf-4a10-9e69-c0b9dd75f0ef': 'Ripstop Canvas (225/96/2)',
-        };
-
-        const processedRolls = rollsData?.map(roll => {
+        // Now fetch fabric names for all rolls
+        const processedRolls = await Promise.all(rollsData?.map(async (roll) => {
           // Batch info from joined production_batches
           const realBatch = (roll.production_batches as any)?.batch_number;
           const productionType = (roll.production_batches as any)?.production_type || 'Unknown';
           
-          // Order info
-          const orderInfo = roll.customer_order_id ? orderMap[roll.customer_order_id as keyof typeof orderMap] : undefined;
-          const orderNumber = orderInfo?.order_number || null;
-          const customerId = orderInfo?.customer_id || null;
-          // Customer info
-          const customerName = customerId ? customerMap[customerId as keyof typeof customerMap] : null;
-          // Base fabric info (for finished fabric rolls) - will be set after the map
+          // Fetch fabric name based on fabric type
+          let fabricName = null;
           let baseFabricName = null;
+          
+          if (roll.fabric_type === 'base_fabric') {
+            // For base fabric rolls, get name from base_fabrics table
+            const { data: baseFabricData } = await supabase
+              .from('base_fabrics')
+              .select('name')
+              .eq('id', roll.fabric_id)
+              .single();
+            fabricName = baseFabricData?.name || null;
+          } else if (roll.fabric_type === 'finished_fabric') {
+            // For finished fabric rolls, get base fabric name from finished_fabrics table
+            const { data: finishedFabricData } = await supabase
+              .from('finished_fabrics')
+              .select('name, base_fabric_id, base_fabrics(name)')
+              .eq('id', roll.fabric_id)
+              .single();
+            // Use base fabric name as the primary fabric name for display
+            fabricName = (finishedFabricData?.base_fabrics as any)?.name || null;
+            baseFabricName = (finishedFabricData?.base_fabrics as any)?.name || null;
+          }
+          
+          // Customer info (we'll fetch this dynamically if needed)
+          let customerName = null;
+          let orderNumber = null;
+          
+          // Try to get customer info from customer_order_id if present
+          if (roll.customer_order_id) {
+            // We'll need to fetch this separately if required
+            // For now, leave as null and handle in a separate query if needed
+          }
 
           // Parse existing QR code data
           let qrData = null;
@@ -180,6 +189,7 @@ export default function QRCodesPage() {
             productionType,
             orderNumber,
             customerName,
+            fabric_name: fabricName, // Set the fabric name from fetched data
             baseFabricName,
             qr_data: {
               // always default to stock_building if not a customer order
@@ -199,6 +209,8 @@ export default function QRCodesPage() {
               batchId: roll.batch_id,
               batchNumber: processedRoll.batchNumber,
               productionType: processedRoll.productionType,
+              fabricName: processedRoll.fabric_name,
+              baseFabricName: processedRoll.baseFabricName,
               customerOrderId: roll.customer_order_id,
               orderNumber: processedRoll.orderNumber,
               customerName: processedRoll.customerName,
@@ -207,54 +219,7 @@ export default function QRCodesPage() {
           }
 
           return processedRoll;
-        }) || [];
-
-        // Now fetch base fabric names for finished fabric rolls
-        const finishedFabricRolls = processedRolls.filter(roll => roll.fabric_type === 'finished_fabric');
-        if (finishedFabricRolls.length > 0) {
-          const fabricIds = [...new Set(finishedFabricRolls.map(roll => roll.fabric_id))];
-          
-          try {
-            const { data: finishedFabricsData, error: finishedFabricsError } = await supabase
-              .from('finished_fabrics')
-              .select('id, base_fabric_id')
-              .in('id', fabricIds);
-            
-            if (!finishedFabricsError && finishedFabricsData) {
-              // Create a map of finished fabric ID to base fabric ID
-              const finishedToBaseMap = finishedFabricsData.reduce((acc, fabric) => {
-                if (fabric.base_fabric_id) {
-                  acc[fabric.id] = fabric.base_fabric_id;
-                }
-                return acc;
-              }, {} as Record<string, string>);
-              
-              // Update the processed rolls with base fabric names
-              const updatedRolls = processedRolls.map(roll => {
-                if (roll.fabric_type === 'finished_fabric') {
-                  const baseFabricId = finishedToBaseMap[roll.fabric_id];
-                  const baseFabricName = baseFabricId ? baseFabricMap[baseFabricId as keyof typeof baseFabricMap] : null;
-                  
-                  return {
-                    ...roll,
-                    baseFabricName,
-                    qr_data: {
-                      ...roll.qr_data,
-                      baseFabricName,
-                    }
-                  };
-                }
-                return roll;
-              });
-              
-              console.log('Updated rolls with base fabric info:', updatedRolls.slice(0, 2));
-              setFabricRolls(updatedRolls);
-              return;
-            }
-          } catch (error) {
-            console.error('Error fetching finished fabrics:', error);
-          }
-        }
+        }) || []);
 
         console.log('Processed rolls sample:', processedRolls.slice(0, 2));
         setFabricRolls(processedRolls);
@@ -422,6 +387,301 @@ export default function QRCodesPage() {
     }
   }
 
+  const handlePrintBatch = (batchId: string) => {
+    setSelectedBatchForPrint(batchId)
+    setSelectedRollsForPrint(new Set())
+    setShowPrintModal(true)
+  }
+
+  const handleSelectRollForPrint = (rollId: string) => {
+    const newSelected = new Set(selectedRollsForPrint)
+    if (newSelected.has(rollId)) {
+      newSelected.delete(rollId)
+    } else {
+      newSelected.add(rollId)
+    }
+    setSelectedRollsForPrint(newSelected)
+  }
+
+  const handleSelectAllRollsInBatch = (batchId: string) => {
+    const batch = filteredGroups.find(g => g.batchId === batchId)
+    if (batch) {
+      const allRollIds = batch.rolls.map(roll => roll.id)
+      setSelectedRollsForPrint(new Set(allRollIds))
+    }
+  }
+
+  const handleDeselectAllRolls = () => {
+    setSelectedRollsForPrint(new Set())
+  }
+
+  const handlePrintSelectedRolls = async () => {
+    if (selectedRollsForPrint.size === 0) return
+
+    setPrintLoading(true)
+    try {
+      // Get the selected rolls data
+      const selectedRollsData = fabricRolls.filter(roll => selectedRollsForPrint.has(roll.id))
+      
+      // Create print window with QR codes in 2x3 grid
+      const printWindow = window.open('', '_blank')
+      if (!printWindow) {
+        alert('Please allow popups to print QR codes')
+        return
+      }
+
+      // Generate HTML for printing
+      const printHTML = await generatePrintHTML(selectedRollsData)
+      
+      printWindow.document.write(printHTML)
+      printWindow.document.close()
+      
+      // Wait for images to load then print
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print()
+          printWindow.close()
+        }, 500)
+      }
+    } catch (error) {
+      console.error('Error printing QR codes:', error)
+      alert('Error printing QR codes. Please try again.')
+    } finally {
+      setPrintLoading(false)
+    }
+  }
+
+  const generatePrintHTML = async (rolls: FabricRoll[]) => {
+    const rollsPerPage = 6
+    const pages = Math.ceil(rolls.length / rollsPerPage)
+    
+    let html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>QR Codes - Batch Print</title>
+        <style>
+          @media print {
+            body { margin: 0; }
+            .page { page-break-after: always; }
+            .page:last-child { page-break-after: avoid; }
+          }
+          
+          body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: white;
+          }
+          
+          .page {
+            width: 210mm;
+            height: 297mm;
+            padding: 15mm;
+            box-sizing: border-box;
+            position: relative;
+          }
+          
+          .page-header {
+            text-align: center;
+            margin-bottom: 20mm;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10mm;
+          }
+          
+          .page-title {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 0;
+            color: #333;
+          }
+          
+          .page-subtitle {
+            font-size: 16px;
+            margin: 5mm 0 0 0;
+            color: #666;
+          }
+          
+          .qr-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr 1fr;
+            gap: 15mm;
+            height: 220mm;
+          }
+          
+          .qr-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #ccc;
+            border-radius: 5mm;
+            padding: 8mm;
+            text-align: center;
+            background: #f9f9f9;
+          }
+          
+          .qr-code {
+            width: 35mm;
+            height: 35mm;
+            margin-bottom: 5mm;
+          }
+          
+          .roll-info {
+            font-size: 12px;
+            line-height: 1.3;
+            color: #333;
+          }
+          
+          .roll-number {
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 2mm;
+            color: #000;
+          }
+          
+          .cut-line {
+            position: absolute;
+            background: #999;
+          }
+          
+          .cut-line.vertical {
+            width: 1px;
+            height: 100%;
+            left: 50%;
+            top: 0;
+          }
+          
+          .cut-line.horizontal-1 {
+            height: 1px;
+            width: 100%;
+            top: 33.333%;
+            left: 0;
+          }
+          
+          .cut-line.horizontal-2 {
+            height: 1px;
+            width: 100%;
+            top: 66.667%;
+            left: 0;
+          }
+          
+          .page-footer {
+            position: absolute;
+            bottom: 10mm;
+            left: 15mm;
+            right: 15mm;
+            text-align: center;
+            font-size: 10px;
+            color: #666;
+            border-top: 1px solid #ccc;
+            padding-top: 5mm;
+          }
+        </style>
+      </head>
+      <body>
+    `
+
+    for (let pageNum = 0; pageNum < pages; pageNum++) {
+      const startIndex = pageNum * rollsPerPage
+      const endIndex = Math.min(startIndex + rollsPerPage, rolls.length)
+      const pageRolls = rolls.slice(startIndex, endIndex)
+      
+      html += `
+        <div class="page">
+          <div class="page-header">
+            <h1 class="page-title">QR Codes - Batch Print</h1>
+            <p class="page-subtitle">Page ${pageNum + 1} of ${pages} • Generated on ${new Date().toLocaleDateString()}</p>
+          </div>
+          
+          <div class="qr-grid">
+      `
+      
+      // Add QR codes for this page
+      for (let i = 0; i < rollsPerPage; i++) {
+        if (i < pageRolls.length) {
+          const roll = pageRolls[i]
+          const qrData = JSON.parse(roll.qr_code)
+          
+          // Generate QR code for this roll
+          const qrCodeDataURL = await generateQRCodeSVG(qrData)
+          
+          html += `
+            <div class="qr-item">
+              <div class="roll-number">${roll.roll_number}</div>
+              <img class="qr-code" src="${qrCodeDataURL}" alt="QR Code" />
+              <div class="roll-info">
+                <div><strong>Fabric:</strong> ${roll.fabric_name || 'N/A'}</div>
+                <div><strong>Length:</strong> ${roll.roll_length}m</div>
+                <div><strong>Color:</strong> ${roll.customer_color || roll.fabric_color || 'Natural'}</div>
+                <div><strong>Batch:</strong> ${roll.batchNumber || 'N/A'}</div>
+                <div><strong>Status:</strong> ${roll.roll_status}</div>
+              </div>
+            </div>
+          `
+        } else {
+          // Empty placeholder for incomplete pages
+          html += `
+            <div class="qr-item" style="border: 1px dashed #ccc; background: #f0f0f0;">
+              <div style="color: #999; font-size: 14px;">No Roll</div>
+            </div>
+          `
+        }
+      }
+      
+      html += `
+          </div>
+          
+          <!-- Cut lines -->
+          <div class="cut-line vertical"></div>
+          <div class="cut-line horizontal-1"></div>
+          <div class="cut-line horizontal-2"></div>
+          
+          <div class="page-footer">
+            <p>Unica Textile Mills SA • QR Code Batch Print • Page ${pageNum + 1} of ${pages}</p>
+          </div>
+        </div>
+      `
+    }
+    
+    html += `
+      </body>
+      </html>
+    `
+    
+    return html
+  }
+
+  const generateQRCodeSVG = async (qrData: any): Promise<string> => {
+    try {
+      // Use the qrcode library to generate actual QR codes
+      const QRCode = require('qrcode')
+      const qrString = JSON.stringify(qrData)
+      const qrDataURL = await QRCode.toDataURL(qrString, { 
+        width: 200,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        },
+        errorCorrectionLevel: 'M'
+      })
+      return qrDataURL
+    } catch (error) {
+      console.error('Error generating QR code:', error)
+      // Fallback to simple SVG if QR generation fails
+      const qrString = JSON.stringify(qrData)
+      return `
+        <svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="200" fill="white"/>
+          <text x="100" y="100" text-anchor="middle" dy=".3em" font-family="monospace" font-size="8">QR Code</text>
+          <text x="100" y="120" text-anchor="middle" dy=".3em" font-family="monospace" font-size="6">${qrString.substring(0, 30)}...</text>
+        </svg>
+      `
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -439,9 +699,18 @@ export default function QRCodesPage() {
           <p className="text-gray-600">View and manage fabric roll QR codes (active rolls only)</p>
         </div>
         
-        <button className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
-          Generate Report
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={() => setShowPrintModal(true)}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center gap-2"
+          >
+            <PrinterIcon className="h-5 w-5" />
+            Print Batch
+          </button>
+          <button className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+            Generate Report
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -591,26 +860,35 @@ export default function QRCodesPage() {
                       )}
                     </div>
                     
-                    <button
-                      onClick={() => toggleBatchExpansion(group.batchId)}
-                      className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors"
-                    >
-                      {expandedBatches.has(group.batchId) ? (
-                        <>
-                          <span>Hide Rolls</span>
-                          <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                          </svg>
-                        </>
-                      ) : (
-                        <>
-                          <span>Show Rolls</span>
-                          <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handlePrintBatch(group.batchId)}
+                        className="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center gap-1"
+                      >
+                        <PrinterIcon className="h-3 w-3" />
+                        Print
+                      </button>
+                      <button
+                        onClick={() => toggleBatchExpansion(group.batchId)}
+                        className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors"
+                      >
+                        {expandedBatches.has(group.batchId) ? (
+                          <>
+                            <span>Hide Rolls</span>
+                            <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                            </svg>
+                          </>
+                        ) : (
+                          <>
+                            <span>Show Rolls</span>
+                            <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
                 
@@ -944,6 +1222,139 @@ export default function QRCodesPage() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Batch Modal */}
+      {showPrintModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">Print QR Codes</h3>
+              <button
+                onClick={() => setShowPrintModal(false)}
+                className="text-gray-600 hover:text-gray-800"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {selectedBatchForPrint ? (
+              <div>
+                <div className="mb-6">
+                  <h4 className="text-lg font-medium text-gray-900 mb-3">
+                    Select Rolls to Print from Batch: {filteredGroups.find(g => g.batchId === selectedBatchForPrint)?.batchNumber}
+                  </h4>
+                  
+                  <div className="flex gap-3 mb-4">
+                    <button
+                      onClick={() => handleSelectAllRollsInBatch(selectedBatchForPrint)}
+                      className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={handleDeselectAllRolls}
+                      className="px-3 py-2 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {filteredGroups.find(g => g.batchId === selectedBatchForPrint)?.rolls.map((roll) => (
+                      <div 
+                        key={roll.id} 
+                        className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                          selectedRollsForPrint.has(roll.id) 
+                            ? 'border-blue-500 bg-blue-50' 
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                        onClick={() => handleSelectRollForPrint(roll.id)}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedRollsForPrint.has(roll.id)}
+                            onChange={() => handleSelectRollForPrint(roll.id)}
+                            className="h-4 w-4 text-blue-600 rounded"
+                          />
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{roll.roll_number}</div>
+                            <div className="text-sm text-gray-600">
+                              {roll.fabric_name} • {roll.roll_length}m
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {roll.customer_color || roll.fabric_color || 'Natural'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="flex justify-end gap-3 pt-4 border-t">
+                  <button
+                    onClick={() => setShowPrintModal(false)}
+                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handlePrintSelectedRolls}
+                    disabled={selectedRollsForPrint.size === 0 || printLoading}
+                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {printLoading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        Printing...
+                      </>
+                    ) : (
+                      <>
+                        <PrinterIcon className="h-5 w-5" />
+                        Print {selectedRollsForPrint.size} QR Code{selectedRollsForPrint.size !== 1 ? 's' : ''}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <h4 className="text-lg font-medium text-gray-900 mb-4">Select a Batch to Print</h4>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredGroups.map((group) => (
+                    <div 
+                      key={group.batchId}
+                      className="p-4 border border-gray-200 rounded-lg cursor-pointer hover:border-gray-300 transition-colors"
+                      onClick={() => setSelectedBatchForPrint(group.batchId)}
+                    >
+                      <div className="font-medium text-gray-900">{group.batchNumber}</div>
+                      <div className="text-sm text-gray-600">
+                        {group.productionType} • {group.rolls.length} rolls
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {group.customerName || 'Stock Building'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="flex justify-end pt-4 border-t mt-4">
+                  <button
+                    onClick={() => setShowPrintModal(false)}
+                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
