@@ -153,14 +153,14 @@ export default function QRCodesPage() {
               .single();
             fabricName = baseFabricData?.name || null;
           } else if (roll.fabric_type === 'finished_fabric') {
-            // For finished fabric rolls, get base fabric name from finished_fabrics table
+            // For finished fabric rolls, get finished fabric name from finished_fabrics table
             const { data: finishedFabricData } = await supabase
               .from('finished_fabrics')
               .select('name, base_fabric_id, base_fabrics(name)')
               .eq('id', roll.fabric_id)
               .single();
-            // Use base fabric name as the primary fabric name for display
-            fabricName = (finishedFabricData?.base_fabrics as any)?.name || null;
+            // Use finished fabric name as the primary fabric name for display
+            fabricName = finishedFabricData?.name || null;
             baseFabricName = (finishedFabricData?.base_fabrics as any)?.name || null;
           }
           
@@ -452,7 +452,7 @@ export default function QRCodesPage() {
   }
 
   const generatePrintHTML = async (rolls: FabricRoll[]) => {
-    const rollsPerPage = 6
+    const rollsPerPage = 4 // 2 columns × 2 rows
     const pages = Math.ceil(rolls.length / rollsPerPage)
     
     let html = `
@@ -505,7 +505,7 @@ export default function QRCodesPage() {
           .qr-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            grid-template-rows: 1fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
             gap: 15mm;
             height: 220mm;
           }
@@ -556,14 +556,7 @@ export default function QRCodesPage() {
           .cut-line.horizontal-1 {
             height: 1px;
             width: 100%;
-            top: 33.333%;
-            left: 0;
-          }
-          
-          .cut-line.horizontal-2 {
-            height: 1px;
-            width: 100%;
-            top: 66.667%;
+            top: 50%;
             left: 0;
           }
           
@@ -616,7 +609,6 @@ export default function QRCodesPage() {
                 <div><strong>Length:</strong> ${roll.roll_length}m</div>
                 <div><strong>Color:</strong> ${roll.customer_color || roll.fabric_color || 'Natural'}</div>
                 <div><strong>Batch:</strong> ${roll.batchNumber || 'N/A'}</div>
-                <div><strong>Status:</strong> ${roll.roll_status}</div>
               </div>
             </div>
           `
@@ -636,7 +628,6 @@ export default function QRCodesPage() {
           <!-- Cut lines -->
           <div class="cut-line vertical"></div>
           <div class="cut-line horizontal-1"></div>
-          <div class="cut-line horizontal-2"></div>
           
           <div class="page-footer">
             <p>Unica Textile Mills SA • QR Code Batch Print • Page ${pageNum + 1} of ${pages}</p>
