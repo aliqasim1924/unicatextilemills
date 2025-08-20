@@ -426,32 +426,9 @@ export default function OrderActionButtons({ order, onOrderUpdated }: OrderActio
             if (coatingError) throw coatingError
           }
 
-          // Update stock quantities for this specific item
+          // Note: Automatic stock allocation removed - sales team will allocate manually
           if (stockAllocated > 0) {
-            // Update finished fabric stock
-            const { error: stockError } = await supabase
-              .from('finished_fabrics')
-              .update({ 
-                stock_quantity: fabric.stock_quantity - stockAllocated 
-              })
-              .eq('id', fabric.id)
-
-            if (stockError) {
-              console.error(`Failed to update stock for fabric ${fabric.id}:`, stockError)
-            }
-
-            // Log stock movement
-            await supabase
-              .from('stock_movements')
-              .insert([{
-                fabric_type: 'finished_fabric',
-                fabric_id: fabric.id,
-                movement_type: 'allocation',
-                quantity: -stockAllocated,
-                reference_id: order.id,
-                reference_type: 'customer_order',
-                notes: `Stock allocated to customer order ${orderDetails.internal_order_number} - Color: ${orderItem.color}`
-              }])
+            console.log(`Order confirmed - manual allocation required for ${stockAllocated}m of ${orderItem.color} fabric`)
           }
         } // End of for loop
       }

@@ -206,6 +206,41 @@ export default function ShipmentsPage() {
     }
   }
 
+  const downloadPackingList = async (orderId: string, shipmentNumber: string, shippedDate: string) => {
+    try {
+      const response = await fetch('/api/pdf/packing-list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          orderId,
+          shipmentNumber,
+          shippedDate
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.message || 'Failed to generate packing list')
+      }
+
+      // Get the PDF blob and create download
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `packing-list-${shipmentNumber}-${new Date().toISOString().split('T')[0]}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error downloading packing list:', error)
+      alert('Failed to download packing list. Please try again.')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -354,22 +389,35 @@ export default function ShipmentsPage() {
                     </div>
                   </div>
                   
-                  <button
-                    onClick={() => toggleShipmentExpansion(shipment.id)}
-                    className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors ml-4"
-                  >
-                    {expandedShipments.has(shipment.id) ? (
-                      <>
-                        <span>Hide Items</span>
-                        <ChevronDownIcon className="ml-2 h-4 w-4" />
-                      </>
-                    ) : (
-                      <>
-                        <span>Show Items</span>
-                        <ChevronRightIcon className="ml-2 h-4 w-4" />
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-2 ml-4">
+                    <button
+                      onClick={() => downloadPackingList(shipment.customer_order_id, shipment.shipment_number, shipment.shipped_date)}
+                      className="flex items-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                      title="Download Packing List"
+                    >
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Packing List
+                    </button>
+                    
+                    <button
+                      onClick={() => toggleShipmentExpansion(shipment.id)}
+                      className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors"
+                    >
+                      {expandedShipments.has(shipment.id) ? (
+                        <>
+                          <span>Hide Items</span>
+                          <ChevronDownIcon className="ml-2 h-4 w-4" />
+                        </>
+                      ) : (
+                        <>
+                          <span>Show Items</span>
+                          <ChevronRightIcon className="ml-2 h-4 w-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
               

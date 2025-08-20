@@ -117,17 +117,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Update order status to dispatched
+    // Update order status to dispatched and add dispatch information
     const { error: orderUpdateError } = await supabase
       .from('customer_orders')
       .update({
         order_status: 'dispatched',
+        invoice_number: dispatchData.invoiceNumber,
+        gate_pass_number: dispatchData.gatePass,
+        delivery_note_number: dispatchData.deliveryNote,
+        dispatch_date: new Date().toISOString().split('T')[0],
         updated_at: new Date().toISOString(),
       })
       .eq('id', orderId);
 
     if (orderUpdateError) {
       return res.status(500).json({ error: `Error updating order status: ${orderUpdateError.message}` });
+    }
+
+    // Log shipment creation in audit trail
+    try {
+      await supabase
+        .from('customer_order_audit')
+        .insert({
+          customer_order_id: orderId,
+          action_type: 'shipment_created',
+          change_description: `Shipment ${shipment.shipment_number} created with ${allocatedRolls.length} rolls. Invoice: ${dispatchData.invoiceNumber}, Gate Pass: ${dispatchData.gatePass}`,
+          changed_by: 'User',
+          change_reason: 'Order dispatched to customer',
+          field_changed: 'shipment_status',
+          new_value: `${shipment.shipment_number} - ${allocatedRolls.length} rolls`
+        })
+    } catch (auditError) {
+      console.error('Error logging shipment audit:', auditError)
+      // Don't fail the shipment creation if audit logging fails
     }
 
     return res.status(200).json({ 

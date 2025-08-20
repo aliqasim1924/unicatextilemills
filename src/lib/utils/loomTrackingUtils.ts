@@ -867,15 +867,15 @@ export const loomTrackingUtils = {
     }
 
     // At the end of completeCoatingProduction
-    // Fetch customer order ID if available
+    // Note: Automatic allocation removed - sales team will allocate manually
+    // Fetch customer order ID for logging purposes only
     const { data: prodOrderDetails } = await supabase
       .from('production_orders')
       .select('customer_order_id')
       .eq('id', completionData.productionOrderId)
       .single()
     if (prodOrderDetails?.customer_order_id) {
-      console.log('Auto-allocation triggered for production order completion - customer_order_id:', prodOrderDetails.customer_order_id);
-      await loomTrackingUtils.autoAllocateAGradeRollsToCustomerOrder(prodOrderDetails.customer_order_id)
+      console.log('Production completed for customer order:', prodOrderDetails.customer_order_id, '- Manual allocation required');
     }
 
     // Update finished fabric stock quantity with total production
@@ -1255,11 +1255,10 @@ export const loomTrackingUtils = {
       }
     }
 
+    // Note: Automatic allocation removed - sales team will allocate manually
     // At the end of completeCoatingProductionWithIndividualRolls
-    // Auto-allocate A grade rolls to customer order if present
     if (customerOrderId) {
-      console.log('Auto-allocation triggered for production order completion (individual rolls) - customer_order_id:', customerOrderId);
-      await loomTrackingUtils.autoAllocateAGradeRollsToCustomerOrder(customerOrderId)
+      console.log('Production completed for customer order:', customerOrderId, '- Manual allocation required');
     }
 
     // Update finished fabric stock quantity with total production

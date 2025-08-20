@@ -1,6 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { supabase } from '@/lib/supabase/client'
-import { CustomerOrderAudit } from '@/types/database'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -53,9 +52,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Fetch all rolls supplied (allocated or dispatched) to this customer order
     const { data: suppliedRolls, error: rollsError } = await supabase
       .from('fabric_rolls')
-      .select('id, roll_number, roll_length, remaining_length, quality_grade, customer_color, production_batches(batch_number)')
+      .select(`
+        id, 
+        roll_number, 
+        roll_length, 
+        remaining_length, 
+        quality_grade, 
+        customer_color, 
+        roll_status,
+        production_batches(batch_number),
+        created_at
+      `)
       .eq('customer_order_id', orderId)
-      .in('roll_status', ['allocated','partially_allocated','dispatched'])
+      .in('roll_status', ['allocated','partially_allocated','shipped','delivered'])
+      .order('created_at', { ascending: true })
 
     if (rollsError) {
       console.error('Error fetching supplied rolls:', rollsError)

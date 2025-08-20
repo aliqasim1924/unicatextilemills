@@ -128,7 +128,7 @@ export const generateReportPDF = async (reportData: any) => {
       pdf.setFontSize(8)
       pdf.setFont(undefined, 'bold')
       headers.forEach((header, index) => {
-        pdf.text(header, startX + (index * cellWidth), yPosition)
+        pdf.text(header || '', startX + (index * cellWidth), yPosition)
       })
       yPosition += cellHeight
 
@@ -141,7 +141,7 @@ export const generateReportPDF = async (reportData: any) => {
         }
         
         row.forEach((cell, index) => {
-          const cellText = cell.length > 20 ? cell.substring(0, 17) + '...' : cell
+          const cellText = (cell || '').length > 20 ? (cell || '').substring(0, 17) + '...' : (cell || '')
           pdf.text(cellText, startX + (index * cellWidth), yPosition)
         })
         yPosition += cellHeight
@@ -168,7 +168,7 @@ export const generateReportPDF = async (reportData: any) => {
 }
 
 interface PDFGeneratorProps {
-  type: 'production-order' | 'customer-order' | 'stock-report' | 'management-report' | 'customer-orders-report' | 'stock-management-report' | 'production-wip-report' | 'customer-order-audit' | 'production-order-audit' | 'analytics-report' | 'overview-report' | 'orders-report' | 'production-report' | 'performance-report'
+  type: 'production-order' | 'customer-order' | 'stock-report' | 'management-report' | 'customer-orders-report' | 'stock-management-report' | 'production-wip-report' | 'customer-order-audit' | 'production-order-audit' | 'packing-list' | 'analytics-report' | 'overview-report' | 'orders-report' | 'production-report' | 'performance-report'
   orderId?: string
   options?: any
   buttonText?: string
@@ -316,6 +316,41 @@ export default function PDFGenerator({
     }
   }
 
+  // Generate Packing List PDF
+  const generatePackingList = async (orderId: string, shipmentNumber?: string, shippedDate?: string) => {
+    try {
+      const response = await fetch('/api/pdf/packing-list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          orderId,
+          shipmentNumber: shipmentNumber || null,
+          shippedDate: shippedDate || null
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to generate packing list PDF')
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `packing-list-${orderId}-${new Date().toISOString().split('T')[0]}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+    } catch (error) {
+      console.error('Error generating packing list:', error)
+      throw error
+    }
+  }
+
   // Generate Production Order Audit Trail PDF
   const generateProductionOrderAuditTrail = async (orderId: string) => {
     try {
@@ -411,6 +446,12 @@ export default function PDFGenerator({
           // Generate production order audit trail PDF
           if (!orderId) throw new Error('Order ID required for production order audit trail PDF')
           await generateProductionOrderAuditTrail(orderId)
+          return // Exit early since download is handled in the function
+        
+        case 'packing-list':
+          // Generate packing list PDF
+          if (!orderId) throw new Error('Order ID required for packing list PDF')
+          await generatePackingList(orderId, options.shipmentNumber, options.shippedDate)
           return // Exit early since download is handled in the function
       }
 

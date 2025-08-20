@@ -15,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { productionOrderId, requestedQuantity, completedBy } = req.body;
+  const { productionOrderId, actualQuantity: requestedQuantity, completedBy, qualityNotes } = req.body;
 
   if (!productionOrderId) {
     return res.status(400).json({ error: 'Production order ID is required' });
@@ -25,7 +25,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Get production order details
     const { data: productionOrder, error: orderError } = await supabase
       .from('production_orders')
-      .select('*')
+      .select(`
+        *,
+        customer_orders (
+          id,
+          internal_order_number,
+          finished_fabric_id,
+          customer_order_items (
+            id,
+            color,
+            quantity_ordered
+          )
+        )
+      `)
       .eq('id', productionOrderId)
       .single();
 
@@ -35,7 +47,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const fabricId = productionOrder?.finished_fabric_id;
     const fabricType = productionOrder?.production_type;
-    const actualQuantity = requestedQuantity || productionOrder?.quantity || 0;
+    const actualQuantity = requestedQuantity || productionOrder?.quantity_required || 0;
 
     // Generate batch number
     const date = new Date();
@@ -45,15 +57,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     const batchNumber = `${fabricType?.toUpperCase()}-${year}${month}${day}-${random}`;
 
-    // Get customer color for production
-    const customerOrderItemId = productionOrder.customer_order_item_id;
-    const { data: customerOrderItem } = await supabase
-      .from('customer_order_items')
-      .select('customer_color')
-      .eq('id', customerOrderItemId)
-      .single();
-
-    const customerColor = customerOrderItem?.customer_color || 'default';
+    // Get customer color for production - prioritize from customer order items
+    let customerColor = 'Natural'; // Default color
+    let customerOrderItemId = null;
+    
+    if (productionOrder.customer_orders?.customer_order_items?.length > 0) {
+      const orderItem = productionOrder.customer_orders.customer_order_items[0];
+      customerColor = orderItem.color || 'Natural';
+      customerOrderItemId = orderItem.id;
+    }
 
     // Create production batch
     const { data: batch, error: batchError } = await supabase
@@ -62,11 +74,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         batch_number: batchNumber,
         production_order_id: productionOrderId,
         production_type: fabricType,
-        quantity_produced: actualQuantity,
-        customer_color: customerColor,
-        status: 'completed',
-        completed_by: completedBy,
+        planned_quantity: actualQuantity,
+        actual_a_grade_quantity: actualQuantity,
+        batch_status: 'completed',
         completed_at: new Date().toISOString(),
+        notes: qualityNotes || 'Production completed successfully',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -77,17 +89,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: `Failed to create batch: ${batchError.message}` });
     }
 
+    let createdRolls = [];
+    let qrCodesGenerated = 0;
+
     // Create fabric rolls based on production type
     if (fabricType === 'coating') {
       // Create individual finished fabric rolls
       const rollsToCreate = Math.ceil(actualQuantity / 50); // 50m per roll
-      const createdRolls = [];
-
+      
       for (let i = 0; i < rollsToCreate; i++) {
         const rollLength = Math.min(50, actualQuantity - (i * 50));
         if (rollLength <= 0) break;
 
-        const rollNumber = `${batchNumber}-A${actualQuantity}-R${String(i + 1).padStart(3, '0')}`;
+        const rollNumber = `${batchNumber}-R${String(i + 1).padStart(3, '0')}`;
         
         // Generate QR code data
         const qrData = {
@@ -102,14 +116,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           .from('fabric_rolls')
           .insert({
             roll_number: rollNumber,
+            batch_id: batch.id,
             fabric_id: fabricId,
             fabric_type: 'finished_fabric',
             roll_length: rollLength,
             remaining_length: rollLength,
             roll_status: 'available',
             customer_color: customerColor,
-            batch_id: batch.id,
-            qr_code: JSON.stringify(qrData),
+            quality_grade: 'A', // Default to A grade for new production
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
@@ -124,7 +138,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const updatedQrData = {
           ...qrData,
           rollId: roll.id,
-          apiUrl: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://unicatextilemills.netlify.app'}/roll/${roll.id}`
+          apiUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/roll/${roll.id}`
         };
 
         const { error: qrUpdateError } = await supabase
@@ -139,6 +153,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         createdRolls.push(roll);
+        qrCodesGenerated++;
       }
 
       // Update finished fabric stock
@@ -170,7 +185,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const rollLength = Math.min(50, actualQuantity - (i * 50));
         if (rollLength <= 0) break;
 
-        const rollNumber = `${batchNumber}-A${actualQuantity}-R${String(i + 1).padStart(3, '0')}`;
+        const rollNumber = `${batchNumber}-R${String(i + 1).padStart(3, '0')}`;
         
         // Create loom roll
         const { data: loomRoll, error: loomRollError } = await supabase
@@ -182,6 +197,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             roll_status: 'available',
             customer_color: customerColor,
             batch_id: batch.id,
+            quality_grade: 'A', // Default to A grade for new production
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
@@ -205,14 +221,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           .from('fabric_rolls')
           .insert({
             roll_number: rollNumber,
+            batch_id: batch.id,
             fabric_id: fabricId,
             fabric_type: 'base_fabric',
             roll_length: rollLength,
             remaining_length: rollLength,
             roll_status: 'available',
             customer_color: customerColor,
-            batch_id: batch.id,
-            qr_code: JSON.stringify(qrData),
+            quality_grade: 'A', // Default to A grade for new production
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
@@ -227,7 +243,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const updatedQrData = {
           ...qrData,
           rollId: baseFabricRoll.id,
-          apiUrl: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://unicatextilemills.netlify.app'}/roll/${baseFabricRoll.id}`
+          apiUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://unicatextilemills.netlify.app'}/roll/${baseFabricRoll.id}`
         };
 
         const { error: qrUpdateError } = await supabase
@@ -240,6 +256,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (qrUpdateError) {
           return res.status(500).json({ error: `Failed to update QR code for base fabric roll ${baseFabricRoll.id}: ${qrUpdateError.message}` });
         }
+
+        createdRolls.push(baseFabricRoll);
+        qrCodesGenerated++;
       }
 
       // Update base fabric stock
@@ -268,7 +287,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { error: updateError } = await supabase
       .from('production_orders')
       .update({
-        status: 'completed',
+        production_status: 'completed',
+        quantity_produced: actualQuantity,
         completed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -280,11 +300,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       success: true,
-      batch: batch,
+      productionType: fabricType,
+      batchNumber: batch.batch_number,
+      quantity: actualQuantity,
+      rollsCreated: createdRolls.length,
+      qrCodesGenerated: qrCodesGenerated,
       message: 'Production completed successfully'
     });
 
   } catch (error) {
+    console.error('Production completion error:', error);
     return res.status(500).json({ error: `Internal server error: ${error}` });
   }
 } 

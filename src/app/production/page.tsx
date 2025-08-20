@@ -596,7 +596,10 @@ export default function ProductionPage() {
           quality_grade: r.quality_grade
         })) || []);
         
-        if (!availableRolls || availableRolls.length === 0) throw new Error('No available rolls found for allocation');
+        if (!availableRolls || availableRolls.length === 0) {
+          console.warn(`No available rolls found for fabric_id ${fabricId}, color ${targetColor}`);
+          continue; // Skip this order if no rolls available
+        }
         // Allocate rolls
         for (const roll of availableRolls) {
           if (allocationLeft <= 0) break;
@@ -686,16 +689,24 @@ export default function ProductionPage() {
         }
       }
 
-      // Update final stock quantity
+      // Update final stock quantity - this should happen after all allocations are processed
       if (allocations.length > 0) {
         const totalAllocated = allocations.reduce((sum, a) => sum + a.allocation, 0)
-        await supabase
+        console.log(`Updating finished fabric stock: ${fabric.stock_quantity} - ${totalAllocated} = ${fabric.stock_quantity - totalAllocated}`);
+        
+        const { error: stockUpdateError } = await supabase
           .from('finished_fabrics')
           .update({
             stock_quantity: fabric.stock_quantity - totalAllocated,
             updated_at: new Date().toISOString()
           })
           .eq('id', fabricId)
+        
+        if (stockUpdateError) {
+          console.error('Error updating finished fabric stock:', stockUpdateError);
+        } else {
+          console.log(`Successfully updated finished fabric stock to ${fabric.stock_quantity - totalAllocated}`);
+        }
       }
 
       return allocations

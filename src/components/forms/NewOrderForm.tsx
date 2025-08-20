@@ -319,33 +319,11 @@ export default function NewOrderForm({ isOpen, onClose, onOrderCreated }: NewOrd
     return { weavingOrderId, hasWeaving: allocationPlan.needs_weaving_production, hasCoating: allocationPlan.needs_coating_production }
   }
 
+  // Removed automatic stock allocation - sales team will allocate manually
   const updateStockQuantities = async (fabric: FinishedFabric, allocationPlan: AllocationPlan, orderId: string, color: string) => {
-    if (allocationPlan.stock_allocated > 0) {
-      // Update finished fabric stock
-      const { error } = await supabase
-        .from('finished_fabrics')
-        .update({ 
-          stock_quantity: fabric.stock_quantity - allocationPlan.stock_allocated 
-        })
-        .eq('id', fabric.id)
-
-      if (error) {
-        throw new Error(`Failed to update stock: ${error.message}`)
-      }
-
-      // Log stock movement with color information
-      await supabase
-        .from('stock_movements')
-        .insert([{
-          fabric_type: 'finished_fabric',
-          fabric_id: fabric.id,
-          movement_type: 'allocation',
-          quantity: -allocationPlan.stock_allocated,
-          reference_id: orderId,
-          reference_type: 'customer_order',
-          notes: `Stock allocated to customer order - Color: ${color}`
-        }])
-    }
+    // No automatic allocation - this function is now a no-op
+    // Stock allocation will be done manually by sales team
+    console.log('Order created - manual allocation required for', allocationPlan.stock_allocated, 'meters of', color, 'fabric')
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

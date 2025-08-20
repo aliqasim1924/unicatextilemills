@@ -13,6 +13,7 @@ import {
   TagIcon
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
+import { logBusinessEvent } from '@/lib/utils/auditTrail'
 
 interface FabricRoll {
   id: string
@@ -47,6 +48,8 @@ interface Order {
     name: string
     color: string
     stock_quantity: number
+    gsm: number
+    width_meters: number
   }
   customer_order_items?: Array<{
     id: string
@@ -361,6 +364,37 @@ export default function RollAllocationModal({
           })
           .eq('id', currentOrder.finished_fabric_id)
       }
+
+      // Log packing list in audit trail with detailed roll information
+      const allocatedRollsData = selectedRolls.map(sr => {
+        const roll = fabricRolls.find(r => r.id === sr.rollId)
+        return {
+          rollNumber: roll?.roll_number || 'Unknown',
+          length: sr.allocatedLength,
+          gsm: currentOrder.finished_fabrics?.gsm || 400, // Default to 400 if not available
+          width: currentOrder.finished_fabrics?.width_meters || 1.8 // Default to 1.8m if not available
+        }
+      })
+      
+      // Get target color from order items or finished fabric
+      let targetColor = 'Natural'
+      if (currentOrder.customer_order_items && currentOrder.customer_order_items.length > 0) {
+        const itemNeedingAllocation = currentOrder.customer_order_items.find(item => 
+          item.quantity_allocated < item.quantity_ordered
+        )
+        if (itemNeedingAllocation) {
+          targetColor = itemNeedingAllocation.color
+        }
+      } else if (currentOrder.finished_fabrics?.color) {
+        targetColor = currentOrder.finished_fabrics.color
+      }
+      
+      await logBusinessEvent.customerOrder.packingListGenerated(currentOrder.id, {
+        rolls: allocatedRollsData,
+        totalQuantity: totalAllocated,
+        color: targetColor,
+        allocationType: 'manual'
+      })
 
       // Reset and reload
       setShowPinModal(false)

@@ -11,6 +11,7 @@ import {
   LockClosedIcon
 } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
+import { logBusinessEvent } from '@/lib/utils/auditTrail'
 import RollAllocationModal from './RollAllocationModal'
 
 interface Order {
@@ -28,6 +29,8 @@ interface Order {
     name: string
     color: string
     stock_quantity: number
+    gsm: number
+    width_meters: number
   }
   customer_order_items?: Array<{
     id: string
@@ -279,6 +282,30 @@ export default function StockAllocationModal({
           created_at: new Date().toISOString(),
         });
       if (movementError) throw movementError;
+      
+      // Log packing list in audit trail with detailed roll information
+      const allocatedRollsData = []
+      let remainingToLog = allocationAmount
+      
+      for (const roll of availableRolls) {
+        if (remainingToLog <= 0) break
+        const allocFromThisRoll = Math.min(roll.remaining_length, remainingToLog)
+        allocatedRollsData.push({
+          rollNumber: roll.roll_number,
+          length: allocFromThisRoll,
+          gsm: selectedOrder.finished_fabrics?.gsm || 400, // Default to 400 if not available
+          width: selectedOrder.finished_fabrics?.width_meters || 1.8 // Default to 1.8m if not available
+        })
+        remainingToLog -= allocFromThisRoll
+      }
+      
+      await logBusinessEvent.customerOrder.packingListGenerated(selectedOrder.id, {
+        rolls: allocatedRollsData,
+        totalQuantity: allocationAmount,
+        color: targetColor,
+        allocationType: 'quick'
+      })
+      
       // Reset form and reload data
       setShowPinModal(false)
       setPin('')

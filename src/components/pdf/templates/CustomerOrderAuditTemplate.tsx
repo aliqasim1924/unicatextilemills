@@ -1,6 +1,5 @@
 import React from 'react'
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
-import { CustomerOrderAudit } from '@/types/database'
 
 interface CustomerOrder {
   id: string
@@ -25,6 +24,18 @@ interface CustomerOrder {
   }
 }
 
+interface CustomerOrderAudit {
+  id: string
+  action_type: string
+  field_changed?: string | null
+  old_value?: string | null
+  new_value?: string | null
+  change_description: string
+  changed_by?: string | null
+  change_reason?: string | null
+  created_at: string
+}
+
 interface CustomerOrderAuditTemplateProps {
   order: CustomerOrder
   auditTrail: CustomerOrderAudit[]
@@ -36,7 +47,9 @@ interface CustomerOrderAuditTemplateProps {
     remaining_length: number
     quality_grade: string
     customer_color?: string | null
+    roll_status?: string
     production_batches?: { batch_number?: string | null }
+    created_at?: string
   }>
 }
 
@@ -308,26 +321,36 @@ export default function CustomerOrderAuditTemplate({
           </View>
         </View>
 
-        {/* Supplied Rolls Section */}
+        {/* Allocated Rolls Section */}
         {suppliedRolls.length > 0 && (
           <View style={{ marginTop: 16, marginBottom: 16 }}>
-            <Text style={styles.sectionTitle}>SUPPLIED ROLLS (DISPATCHED TO CUSTOMER)</Text>
+            <Text style={styles.sectionTitle}>ALLOCATED ROLLS FOR THIS ORDER</Text>
+            <Text style={{ fontSize: 10, color: '#666', marginBottom: 8 }}>
+              Total Rolls: {suppliedRolls.length} | Total Allocated: {suppliedRolls.reduce((sum, roll) => sum + (roll.roll_length - roll.remaining_length), 0)}m
+            </Text>
             <View style={{ flexDirection: 'row', borderBottom: 1, borderColor: '#ccc', paddingBottom: 4 }}>
-              <Text style={{ width: '20%', fontWeight: 'bold' }}>Roll #</Text>
-              <Text style={{ width: '15%', fontWeight: 'bold' }}>Length</Text>
-              <Text style={{ width: '15%', fontWeight: 'bold' }}>Grade</Text>
-              <Text style={{ width: '20%', fontWeight: 'bold' }}>Color</Text>
-              <Text style={{ width: '20%', fontWeight: 'bold' }}>Batch</Text>
+              <Text style={{ width: '18%', fontWeight: 'bold' }}>Roll #</Text>
+              <Text style={{ width: '12%', fontWeight: 'bold' }}>Length</Text>
+              <Text style={{ width: '12%', fontWeight: 'bold' }}>Allocated</Text>
+              <Text style={{ width: '12%', fontWeight: 'bold' }}>Grade</Text>
+              <Text style={{ width: '18%', fontWeight: 'bold' }}>Color</Text>
+              <Text style={{ width: '18%', fontWeight: 'bold' }}>Batch</Text>
+              <Text style={{ width: '10%', fontWeight: 'bold' }}>Status</Text>
             </View>
-            {suppliedRolls.map((roll) => (
-              <View key={roll.id} style={{ flexDirection: 'row', borderBottom: 0.5, borderColor: '#eee', paddingVertical: 2 }}>
-                <Text style={{ width: '20%' }}>{roll.roll_number}</Text>
-                <Text style={{ width: '15%' }}>{roll.roll_length}m</Text>
-                <Text style={{ width: '15%' }}>{roll.quality_grade}</Text>
-                <Text style={{ width: '20%' }}>{roll.customer_color || '-'}</Text>
-                <Text style={{ width: '20%' }}>{roll.production_batches?.batch_number || '-'}</Text>
-              </View>
-            ))}
+            {suppliedRolls.map((roll) => {
+              const allocatedQty = roll.roll_length - roll.remaining_length;
+              return (
+                <View key={roll.id} style={{ flexDirection: 'row', borderBottom: 0.5, borderColor: '#eee', paddingVertical: 2 }}>
+                  <Text style={{ width: '18%' }}>{roll.roll_number}</Text>
+                  <Text style={{ width: '12%' }}>{roll.roll_length}m</Text>
+                  <Text style={{ width: '12%' }}>{allocatedQty}m</Text>
+                  <Text style={{ width: '12%' }}>{roll.quality_grade}</Text>
+                  <Text style={{ width: '18%' }}>{roll.customer_color || '-'}</Text>
+                  <Text style={{ width: '18%' }}>{roll.production_batches?.batch_number || '-'}</Text>
+                  <Text style={{ width: '10%' }}>{roll.roll_status?.replace('_', ' ').toUpperCase()}</Text>
+                </View>
+              );
+            })}
           </View>
         )}
 

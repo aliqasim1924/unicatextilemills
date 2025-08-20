@@ -145,6 +145,51 @@ export const logBusinessEvent = {
         changed_by: 'User',
         change_reason: 'Customer delivery confirmed'
       })
+    },
+
+    packingListGenerated: async (orderId: string, details: { 
+      rolls: Array<{
+        rollNumber: string
+        length: number
+        gsm: number
+        width: number
+      }>,
+      totalQuantity: number, 
+      color: string,
+      allocationType: 'manual' | 'quick'
+    }) => {
+      // Calculate weight for each roll: (GSM x Width x Length) / 1000 + 1kg tubing
+      let runningMeters = 0
+      let runningWeight = 0
+      
+      const rollRows = details.rolls.map((roll, index) => {
+        runningMeters += roll.length
+        const rollWeight = ((roll.gsm * roll.width * roll.length) / 1000) + 1 // +1kg for tubing
+        runningWeight += rollWeight
+        
+        return `${roll.rollNumber.padEnd(35)} | ${roll.length.toFixed(1).padStart(6)}m | ${runningMeters.toFixed(1).padStart(8)}m | ${rollWeight.toFixed(1).padStart(6)}kg | ${runningWeight.toFixed(1).padStart(8)}kg`
+      }).join('\n')
+      
+      const packingListTable = `
+PACKING LIST - ${details.color} Fabric Allocation
+═══════════════════════════════════════════════════════════════════════════
+Roll Number                              | Meters | Running | Weight | Running
+                                        |        | Meters  | (kg)   | Weight
+───────────────────────────────────────────────────────────────────────────
+${rollRows}
+═══════════════════════════════════════════════════════════════════════════
+TOTALS                                  | ${details.totalQuantity.toFixed(1).padStart(6)}m | ${runningMeters.toFixed(1).padStart(8)}m | - | ${runningWeight.toFixed(1).padStart(8)}kg
+═══════════════════════════════════════════════════════════════════════════
+Allocation Type: ${details.allocationType === 'manual' ? 'Manual Selection' : 'Quick Allocation (FIFO)'}
+Generated: ${new Date().toLocaleString()}
+      `.trim()
+      
+      await logCustomerOrderAudit(orderId, {
+        action_type: 'packing_list',
+        change_description: packingListTable,
+        changed_by: 'User',
+        change_reason: `${details.allocationType === 'manual' ? 'Manual' : 'Quick'} allocation completed by sales team`
+      })
     }
   },
 

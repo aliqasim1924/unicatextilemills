@@ -278,8 +278,8 @@ export default function StockManagementTemplate({ data, generatedAt }: StockMana
         {/* Executive Summary */}
         <View style={styles.summaryContainer}>
           <View style={styles.summaryBox}>
-            <Text style={styles.summaryLabel}>Total Stock Value</Text>
-            <Text style={styles.summaryValue}>{(totalBaseStock + totalFinishedStock).toLocaleString()}</Text>
+            <Text style={styles.summaryLabel}>Total Finished Stock</Text>
+            <Text style={styles.summaryValue}>{totalFinishedStock.toLocaleString()}</Text>
             <Text style={styles.summaryUnit}>meters</Text>
           </View>
           <View style={styles.summaryBox}>
