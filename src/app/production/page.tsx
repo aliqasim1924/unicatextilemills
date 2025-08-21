@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+
+
+import { useState, useEffect, useMemo } from 'react'
 import { 
   ClockIcon,
   PlayIcon,
@@ -18,6 +20,10 @@ import { logBusinessEvent } from '@/lib/utils/auditTrail'
 import WeavingCompletionModal from '@/components/production/WeavingCompletionModal'
 import CoatingCompletionModal from '@/components/production/CoatingCompletionModal'
 import CoatingRollAllocationModal from '@/components/production/CoatingRollAllocationModal'
+import DateGroupContainer from '@/components/archive/DateGroupContainer'
+
+import { groupByDate, DateGroup, DateGroupingConfig } from '@/lib/utils/dateGroupingUtils'
+import { useArchiveState } from '@/lib/utils/archiveUtils'
 
 interface ProductionOrder {
   id: string
@@ -98,6 +104,24 @@ export default function ProductionPage() {
   const [showCoatingCompletionModal, setShowCoatingCompletionModal] = useState(false)
   const [showCoatingRollAllocationModal, setShowCoatingRollAllocationModal] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<ProductionOrder | null>(null)
+
+  // Archive state management
+  const { 
+    isExpanded, 
+    setExpanded, 
+    initializeGroups 
+  } = useArchiveState()
+
+  // Date grouping configuration for production orders
+  const productionGroupingConfig: DateGroupingConfig = {
+    dateField: 'actual_end_date', // Use completion date for grouping
+    statusField: 'production_status',
+    statusMapping: {
+      pending: ['pending', 'waiting_materials', 'on_hold'],
+      inProgress: ['in_progress'],
+      completed: ['completed']
+    }
+  }
 
   useEffect(() => {
     loadProductionOrders()
@@ -879,17 +903,33 @@ export default function ProductionPage() {
     setSelectedOrder(null)
   }
 
-  const filteredOrders = productionOrders.filter(order => {
-    const matchesStatus = filterStatus === 'all' || order.production_status === filterStatus
-    const matchesType = filterType === 'all' || order.production_type === filterType
-    const matchesSearch = searchTerm === '' || 
-      order.internal_order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.customer_orders?.customers?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.base_fabrics?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.finished_fabrics?.name.toLowerCase().includes(searchTerm.toLowerCase())
-    
-    return matchesStatus && matchesType && matchesSearch
-      })
+  // Filter orders based on search and status
+  const filteredOrders = useMemo(() => {
+    return productionOrders.filter(order => {
+      const matchesStatus = filterStatus === 'all' || order.production_status === filterStatus
+      const matchesType = filterType === 'all' || order.production_type === filterType
+      const matchesSearch = searchTerm === '' || 
+        order.internal_order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.customer_orders?.customers?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.base_fabrics?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.finished_fabrics?.name.toLowerCase().includes(searchTerm.toLowerCase())
+      
+      return matchesStatus && matchesType && matchesSearch
+    })
+  }, [productionOrders, filterStatus, filterType, searchTerm])
+
+  // Group orders by date
+  const dateGroups = useMemo(() => {
+    const groups = groupByDate(filteredOrders, productionGroupingConfig)
+    return initializeGroups(groups)
+  }, [filteredOrders, initializeGroups])
+
+  // Handle date group toggle
+  const handleGroupToggle = (groupKey: string, expanded: boolean) => {
+    setExpanded(groupKey, expanded)
+  }
+
+
   
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Not set'
@@ -1018,56 +1058,73 @@ export default function ProductionPage() {
         </div>
       </div>
 
-      {/* Production Orders Table */}
-      <div className="bg-white shadow border rounded-lg overflow-hidden">
-        {filteredOrders.length === 0 ? (
-          <div className="text-center py-12">
-            <ClockIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Production Orders</h3>
-            <p className="text-gray-600">
-              {productionOrders.length === 0 
-                ? "No production orders have been created yet." 
-                : "No orders match your current filters."}
-            </p>
+      
+
+      {/* Production Orders by Date Groups */}
+      {dateGroups.length === 0 ? (
+        <div className="text-center py-12 bg-white shadow rounded-lg">
+          <ClockIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Production Orders</h3>
+          <p className="text-gray-600">
+            {productionOrders.length === 0 
+              ? "No production orders have been created yet." 
+              : "No orders match your current filters."}
+          </p>
+          <div className="text-xs text-gray-500 mt-4">
+            DEBUG: Total orders: {productionOrders.length}, Filtered: {filteredOrders.length}, Date Groups: {dateGroups.length}
           </div>
-        ) : (
-          <div className="overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Order Details
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Material
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Progress
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Target Date
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredOrders.map((order) => (
-                  <ExpandableProductionRow
-                    key={order.id}
-                    order={order}
-                    onStatusUpdate={updateProductionStatus}
-                    onView={handleViewOrder}
-                    onEdit={handleEditOrder}
-                    onDelete={handleDeleteOrder}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {dateGroups.map((group) => (
+            <DateGroupContainer
+              key={group.key}
+              group={group}
+              onToggle={handleGroupToggle}
+              itemType="production orders"
+            >
+              {/* Production Orders Table for this Date Group */}
+              <div className="bg-white shadow border rounded-lg overflow-hidden">
+                <div className="overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Order Details
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Material
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Progress
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Status
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Target Date
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {group.items.map((order) => (
+                        <ExpandableProductionRow
+                          key={order.id}
+                          order={order}
+                          onStatusUpdate={updateProductionStatus}
+                          onView={handleViewOrder}
+                          onEdit={handleEditOrder}
+                          onDelete={handleDeleteOrder}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </DateGroupContainer>
+          ))}
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && orderToDelete && (
@@ -1078,13 +1135,13 @@ export default function ProductionPage() {
             </div>
             <h3 className="text-lg font-medium text-gray-900 text-center mb-2">Delete Production Order</h3>
             <p className="text-sm text-gray-600 text-center mb-4">
-              Are you sure you want to delete production order <strong>{orderToDelete.internal_order_number}</strong>?
+              Are you sure you want to delete production order <strong>{orderToDelete?.internal_order_number}</strong>?
               <br />
               <span className="text-xs text-gray-700 mt-1 block">
-                Type: {orderToDelete.production_type} • Status: {orderToDelete.production_status}
+                Type: {orderToDelete?.production_type} • Status: {orderToDelete?.production_status}
               </span>
             </p>
-            {orderToDelete.production_type === 'weaving' && (
+            {orderToDelete?.production_type === 'weaving' && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
                 <p className="text-xs text-yellow-800">
                   <strong>Note:</strong> This will unlink any coating orders that depend on this weaving order.
@@ -1212,41 +1269,41 @@ export default function ProductionPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Order Number</label>
-                  <p className="mt-1 text-sm text-gray-900">{selectedOrder.internal_order_number}</p>
+                  <p className="mt-1 text-sm text-gray-900">{selectedOrder?.internal_order_number}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Production Type</label>
-                  <p className="mt-1 text-sm text-gray-900 capitalize">{selectedOrder.production_type}</p>
+                  <p className="mt-1 text-sm text-gray-900 capitalize">{selectedOrder?.production_type}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Status</label>
-                  <p className="mt-1 text-sm text-gray-900 capitalize">{selectedOrder.production_status.replace('_', ' ')}</p>
+                  <p className="mt-1 text-sm text-gray-900 capitalize">{selectedOrder?.production_status?.replace('_', ' ') || 'N/A'}</p>
                 </div>
                 {/* Add Colour field here */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Colour</label>
                   <p className="mt-1 text-sm text-gray-900">
-                    {selectedOrder.customer_color || selectedOrder.finished_fabrics?.color || 'N/A'}
+                    {selectedOrder?.customer_color || selectedOrder?.finished_fabrics?.color || 'N/A'}
                   </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Priority Level</label>
-                  <p className="mt-1 text-sm text-gray-900">{priorityConfig[selectedOrder.priority_level as keyof typeof priorityConfig]?.label || 'Normal'}</p>
+                  <p className="mt-1 text-sm text-gray-900">{priorityConfig[selectedOrder?.priority_level as keyof typeof priorityConfig]?.label || 'Normal'}</p>
                 </div>
               </div>
 
               {/* Customer Information */}
-              {selectedOrder.customer_orders && (
+              {selectedOrder?.customer_orders && (
                 <div>
                   <h4 className="text-md font-medium text-gray-900 mb-3">Customer Information</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Customer</label>
-                      <p className="mt-1 text-sm text-gray-900">{selectedOrder.customer_orders.customers?.name || 'N/A'}</p>
+                      <p className="mt-1 text-sm text-gray-900">{selectedOrder?.customer_orders?.customers?.name || 'N/A'}</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Customer Order</label>
-                      <p className="mt-1 text-sm text-gray-900">{selectedOrder.customer_orders.internal_order_number}</p>
+                      <p className="mt-1 text-sm text-gray-900">{selectedOrder?.customer_orders?.internal_order_number}</p>
                     </div>
                   </div>
                 </div>
@@ -1259,17 +1316,17 @@ export default function ProductionPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Material</label>
                     <p className="mt-1 text-sm text-gray-900">
-                      {selectedOrder.production_type === 'weaving' 
-                        ? selectedOrder.base_fabrics?.name 
-                        : selectedOrder.finished_fabrics?.name}
+                      {selectedOrder?.production_type === 'weaving' 
+                        ? selectedOrder?.base_fabrics?.name 
+                        : selectedOrder?.finished_fabrics?.name}
                     </p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Current Stock</label>
                     <p className="mt-1 text-sm text-gray-900">
-                      {selectedOrder.production_type === 'weaving' 
-                        ? selectedOrder.base_fabrics?.stock_quantity 
-                        : selectedOrder.finished_fabrics?.stock_quantity}m
+                      {selectedOrder?.production_type === 'weaving' 
+                        ? selectedOrder?.base_fabrics?.stock_quantity 
+                        : selectedOrder?.finished_fabrics?.stock_quantity}m
                     </p>
                   </div>
                 </div>
@@ -1281,11 +1338,11 @@ export default function ProductionPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Quantity Required</label>
-                    <p className="mt-1 text-sm text-gray-900">{selectedOrder.quantity_required}m</p>
+                    <p className="mt-1 text-sm text-gray-900">{selectedOrder?.quantity_required}m</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Quantity Produced</label>
-                    <p className="mt-1 text-sm text-gray-900">{selectedOrder.quantity_produced}m</p>
+                    <p className="mt-1 text-sm text-gray-900">{selectedOrder?.quantity_produced}m</p>
                   </div>
                 </div>
               </div>
@@ -1296,19 +1353,19 @@ export default function ProductionPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Created</label>
-                    <p className="mt-1 text-sm text-gray-900">{formatDate(selectedOrder.created_at)}</p>
+                    <p className="mt-1 text-sm text-gray-900">{formatDate(selectedOrder?.created_at || '')}</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Target Completion</label>
-                    <p className="mt-1 text-sm text-gray-900">{formatDate(selectedOrder.target_completion_date)}</p>
+                    <p className="mt-1 text-sm text-gray-900">{formatDate(selectedOrder?.target_completion_date || '')}</p>
                   </div>
-                  {selectedOrder.actual_start_date && (
+                  {selectedOrder?.actual_start_date && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Started</label>
                       <p className="mt-1 text-sm text-gray-900">{formatDate(selectedOrder.actual_start_date)}</p>
                     </div>
                   )}
-                  {selectedOrder.actual_end_date && (
+                  {selectedOrder?.actual_end_date && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Completed</label>
                       <p className="mt-1 text-sm text-gray-900">{formatDate(selectedOrder.actual_end_date)}</p>

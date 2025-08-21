@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { 
   TruckIcon, 
@@ -11,6 +11,9 @@ import {
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import QRCodeDisplay from '@/components/ui/QRCodeDisplay'
+import DateGroupContainer from '@/components/archive/DateGroupContainer'
+import { groupByDate, DateGroup, DateGroupingConfig } from '@/lib/utils/dateGroupingUtils'
+import { useArchiveState } from '@/lib/utils/archiveUtils'
 
 interface FabricRoll {
   roll_number: string
@@ -78,6 +81,24 @@ export default function ShipmentsPage() {
   const [expandedShipments, setExpandedShipments] = useState<Set<string>>(new Set())
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [searchTerm, setSearchTerm] = useState('')
+
+  // Archive state management
+  const { 
+    isExpanded, 
+    setExpanded, 
+    initializeGroups 
+  } = useArchiveState()
+
+  // Date grouping configuration for shipments
+  const shipmentGroupingConfig: DateGroupingConfig = {
+    dateField: 'shipped_date', // Use shipment date for grouping
+    statusField: 'shipment_status',
+    statusMapping: {
+      pending: ['preparing'],
+      inProgress: ['shipped'],
+      completed: ['delivered', 'returned']
+    }
+  }
 
   useEffect(() => {
     loadShipments()
@@ -174,6 +195,17 @@ export default function ShipmentsPage() {
     
     return matchesSearch && matchesStatus
   })
+
+  // Group shipments by date
+  const dateGroups = useMemo(() => {
+    const groups = groupByDate(filteredShipments, shipmentGroupingConfig)
+    return initializeGroups(groups)
+  }, [filteredShipments, initializeGroups])
+
+  // Handle date group toggle
+  const handleGroupToggle = (groupKey: string, expanded: boolean) => {
+    setExpanded(groupKey, expanded)
+  }
 
   const toggleShipmentExpansion = (shipmentId: string) => {
     const newExpanded = new Set(expandedShipments)
@@ -342,158 +374,175 @@ export default function ShipmentsPage() {
         </div>
       </div>
 
-      {/* Shipments List */}
-      <div className="space-y-4">
-        {filteredShipments.length === 0 ? (
-          <div className="bg-white p-12 rounded-lg shadow border text-center">
-            <TruckIcon className="h-16 w-16 mx-auto text-gray-600 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Shipments Found</h3>
-            <p className="text-gray-600">
-              {shipments.length === 0 
-                ? "No shipments have been created yet." 
-                : "No shipments match your current filters."}
-            </p>
+
+
+      {/* Shipments by Date Groups */}
+      {dateGroups.length === 0 ? (
+        <div className="text-center py-12 bg-white shadow rounded-lg">
+          <TruckIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Shipments Found</h3>
+          <p className="text-gray-600">
+            {shipments.length === 0 
+              ? "No shipments have been created yet." 
+              : "No shipments match your current filters."}
+          </p>
+          <div className="text-xs text-gray-500 mt-4">
+            DEBUG: Total shipments: {shipments.length}, Filtered: {filteredShipments.length}, Date Groups: {dateGroups.length}
           </div>
-        ) : (
-          filteredShipments.map((shipment) => (
-            <div key={shipment.id} className="bg-white rounded-lg shadow border border-gray-200">
-              <div className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="font-semibold text-gray-900 text-lg">
-                        {shipment.shipment_number}
-                      </h3>
-                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(shipment.shipment_status)}`}>
-                        {shipment.shipment_status}
-                      </span>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {dateGroups.map((group) => (
+            <DateGroupContainer
+              key={group.key}
+              group={group}
+              onToggle={handleGroupToggle}
+              itemType="shipments"
+            >
+              {/* Shipments Table for this Date Group */}
+              <div className="space-y-4">
+                {group.items.map((shipment) => (
+                  <div key={shipment.id} className="bg-white rounded-lg shadow border border-gray-200">
+                    <div className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="font-semibold text-gray-900 text-lg">
+                              {shipment.shipment_number}
+                            </h3>
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(shipment.shipment_status)}`}>
+                              {shipment.shipment_status}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                            <div>
+                              <p><strong>Customer:</strong> {shipment.customer_orders?.customers?.name}</p>
+                              <p><strong>Order:</strong> {shipment.customer_orders?.internal_order_number}</p>
+                            </div>
+                            <div>
+                              <p><strong>Shipped:</strong> {new Date(shipment.shipped_date).toLocaleDateString()}</p>
+                              {shipment.delivery_date && (
+                                <p><strong>Delivered:</strong> {new Date(shipment.delivery_date).toLocaleDateString()}</p>
+                              )}
+                            </div>
+                            <div>
+                              {shipment.tracking_number && (
+                                <p><strong>Tracking:</strong> {shipment.tracking_number}</p>
+                              )}
+                              <p><strong>Items:</strong> {shipment.shipment_items?.length || 0} rolls</p>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 ml-4">
+                          <button
+                            onClick={() => downloadPackingList(shipment.customer_order_id, shipment.shipment_number, shipment.shipped_date)}
+                            className="flex items-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                            title="Download Packing List"
+                          >
+                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Packing List
+                          </button>
+                          
+                          <button
+                            onClick={() => toggleShipmentExpansion(shipment.id)}
+                            className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors"
+                          >
+                            {expandedShipments.has(shipment.id) ? (
+                              <>
+                                <span>Hide Items</span>
+                                <ChevronDownIcon className="ml-2 h-4 w-4" />
+                              </>
+                            ) : (
+                              <>
+                                <span>Show Items</span>
+                                <ChevronRightIcon className="ml-2 h-4 w-4" />
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
-                      <div>
-                        <p><strong>Customer:</strong> {shipment.customer_orders?.customers?.name}</p>
-                        <p><strong>Order:</strong> {shipment.customer_orders?.internal_order_number}</p>
+                    {/* Expandable Items Section */}
+                    {expandedShipments.has(shipment.id) && (
+                      <div className="border-t border-gray-200 p-6 bg-gray-50">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {shipment.shipment_items?.map((item: ShipmentItem) => (
+                            <div key={item.id} className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-gray-200">
+                              <div className="mb-4">
+                                <h4 className="font-semibold text-gray-900 text-sm mb-1">
+                                  {item.fabric_rolls?.roll_number}
+                                </h4>
+                                
+                                <div className="flex items-center gap-1 mb-2">
+                                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${getTypeColor(item.fabric_rolls?.fabric_type || '')}`}>
+                                    {item.fabric_rolls?.fabric_type?.replace('_', ' ') || 'Unknown'}
+                                  </span>
+                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(item.fabric_rolls?.roll_status || '')}`}>
+                                    {item.fabric_rolls?.roll_status || 'Unknown'}
+                                  </span>
+                                </div>
+                                
+                                <div className="space-y-1 text-xs text-gray-600">
+                                  <p><strong>Length:</strong> {item.fabric_rolls?.roll_length}m</p>
+                                  <p><strong>Status:</strong> {item.fabric_rolls?.roll_status || 'Unknown'}</p>
+                                </div>
+                              </div>
+                              
+                              {/* QR Code */}
+                              <div className="flex items-center justify-center mb-4">
+                                <QRCodeDisplay 
+                                  qrData={item.fabric_rolls?.qr_code || ''} 
+                                  size={120} 
+                                  showData={false} 
+                                />
+                              </div>
+                              
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => {
+                                    try {
+                                      const qrData = JSON.parse(item.fabric_rolls?.qr_code || '{}')
+                                      const downloadUrl = qrData.url || qrData.detailsUrl
+                                      if (downloadUrl) {
+                                        window.open(downloadUrl, '_blank')
+                                      }
+                                    } catch (e) {
+                                      console.error('Failed to parse QR code:', e)
+                                    }
+                                  }}
+                                  className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
+                                >
+                                  <span>📄</span>
+                                  Download
+                                </button>
+                                
+                                <button
+                                  onClick={() => {
+                                    // Details functionality not implemented yet
+                                  }}
+                                  className="flex-1 px-3 py-2 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center gap-1"
+                                >
+                                  <EyeIcon className="h-3 w-3" />
+                                  View
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <div>
-                        <p><strong>Shipped:</strong> {new Date(shipment.shipped_date).toLocaleDateString()}</p>
-                        {shipment.delivery_date && (
-                          <p><strong>Delivered:</strong> {new Date(shipment.delivery_date).toLocaleDateString()}</p>
-                        )}
-                      </div>
-                      <div>
-                        {shipment.tracking_number && (
-                          <p><strong>Tracking:</strong> {shipment.tracking_number}</p>
-                        )}
-                        <p><strong>Items:</strong> {shipment.shipment_items?.length || 0} rolls</p>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                  
-                  <div className="flex items-center gap-2 ml-4">
-                    <button
-                      onClick={() => downloadPackingList(shipment.customer_order_id, shipment.shipment_number, shipment.shipped_date)}
-                      className="flex items-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
-                      title="Download Packing List"
-                    >
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Packing List
-                    </button>
-                    
-                    <button
-                      onClick={() => toggleShipmentExpansion(shipment.id)}
-                      className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors"
-                    >
-                      {expandedShipments.has(shipment.id) ? (
-                        <>
-                          <span>Hide Items</span>
-                          <ChevronDownIcon className="ml-2 h-4 w-4" />
-                        </>
-                      ) : (
-                        <>
-                          <span>Show Items</span>
-                          <ChevronRightIcon className="ml-2 h-4 w-4" />
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
-              
-              {/* Expandable Items Section */}
-              {expandedShipments.has(shipment.id) && (
-                <div className="border-t border-gray-200 p-6 bg-gray-50">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {shipment.shipment_items?.map((item) => (
-                      <div key={item.id} className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-gray-200">
-                        <div className="mb-4">
-                          <h4 className="font-semibold text-gray-900 text-sm mb-1">
-                            {item.fabric_rolls?.roll_number}
-                          </h4>
-                          
-                          <div className="flex items-center gap-1 mb-2">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getTypeColor(item.fabric_rolls?.fabric_type || '')}`}>
-                              {item.fabric_rolls?.fabric_type?.replace('_', ' ') || 'Unknown'}
-                            </span>
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(item.fabric_rolls?.roll_status || '')}`}>
-                              {item.fabric_rolls?.roll_status || 'Unknown'}
-                            </span>
-                          </div>
-                          
-                                                      <div className="space-y-1 text-xs text-gray-600">
-                              <p><strong>Length:</strong> {item.fabric_rolls?.roll_length}m</p>
-                              <p><strong>Status:</strong> {item.fabric_rolls?.roll_status || 'Unknown'}</p>
-                          </div>
-                        </div>
-                        
-                        {/* QR Code */}
-                        <div className="flex items-center justify-center mb-4">
-                          <QRCodeDisplay 
-                            qrData={item.fabric_rolls?.qr_code || ''} 
-                            size={120} 
-                            showData={false} 
-                          />
-                        </div>
-                        
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              try {
-                                const qrData = JSON.parse(item.fabric_rolls?.qr_code || '{}')
-                                const downloadUrl = qrData.url || qrData.detailsUrl
-                                if (downloadUrl) {
-                                  window.open(downloadUrl, '_blank')
-                                }
-                              } catch (e) {
-                                console.error('Failed to parse QR code:', e)
-                              }
-                            }}
-                            className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
-                          >
-                            <span>📄</span>
-                            Download
-                          </button>
-                          
-                          <button
-                            onClick={() => {
-                              // Details functionality not implemented yet
-                            }}
-                            className="flex-1 px-3 py-2 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center gap-1"
-                          >
-                            <EyeIcon className="h-3 w-3" />
-                            View
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
+            </DateGroupContainer>
+          ))}
+        </div>
+      )}
     </div>
   )
-} 
+}

@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+
+
+import { useState, useEffect, useMemo } from 'react'
 import { PlusIcon, MagnifyingGlassIcon, FunnelIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { supabase } from '@/lib/supabase/client'
 import NewOrderFormMultiColor from '@/components/forms/NewOrderFormMultiColor'
@@ -8,6 +10,11 @@ import OrderDetailsModal from '@/components/orders/OrderDetailsModal'
 import EditOrderModal from '@/components/orders/EditOrderModal'
 import PDFGenerator from '@/components/pdf/generators/PDFGenerator'
 import ExpandableCustomerOrderRow from '@/components/tables/ExpandableCustomerOrderRow'
+import DateGroupContainer from '@/components/archive/DateGroupContainer'
+
+import { groupByDate, DateGroup, DateGroupingConfig } from '@/lib/utils/dateGroupingUtils'
+import { getStatusConfig } from '@/lib/utils/statusCountUtils'
+import { useArchiveState } from '@/lib/utils/archiveUtils'
 
 interface CustomerOrder {
   id: string
@@ -48,6 +55,13 @@ export default function OrdersPage() {
   const [showEditModal, setShowEditModal] = useState(false)
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   
+  // Archive state management
+  const { 
+    isExpanded, 
+    setExpanded, 
+    initializeGroups 
+  } = useArchiveState()
+  
   // Delete functionality states
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showDeletePinModal, setShowDeletePinModal] = useState(false)
@@ -55,6 +69,17 @@ export default function OrdersPage() {
   const [deletePinError, setDeletePinError] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [orderToDelete, setOrderToDelete] = useState<CustomerOrder | null>(null)
+
+  // Date grouping configuration for orders
+  const orderGroupingConfig: DateGroupingConfig = {
+    dateField: 'created_at',
+    statusField: 'order_status',
+    statusMapping: {
+      pending: ['pending'],
+      inProgress: ['confirmed', 'in_production', 'production_complete', 'ready_for_dispatch'],
+      completed: ['dispatched', 'delivered']
+    }
+  }
 
   useEffect(() => {
     loadOrders()
@@ -94,16 +119,30 @@ export default function OrdersPage() {
     }
   }
 
-  const filteredOrders = orders.filter(order => {
-    const matchesSearch = !searchTerm || 
-      order.internal_order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.customer_po_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.customers?.name.toLowerCase().includes(searchTerm.toLowerCase())
-    
-    const matchesStatus = statusFilter === 'all' || order.order_status === statusFilter
-    
-    return matchesSearch && matchesStatus
-  })
+  // Filter orders based on search and status
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      const matchesSearch = !searchTerm || 
+        order.internal_order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.customer_po_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.customers?.name.toLowerCase().includes(searchTerm.toLowerCase())
+      
+      const matchesStatus = statusFilter === 'all' || order.order_status === statusFilter
+      
+      return matchesSearch && matchesStatus
+    })
+  }, [orders, searchTerm, statusFilter])
+
+  // Group orders by date
+  const dateGroups = useMemo(() => {
+    const groups = groupByDate(filteredOrders, orderGroupingConfig)
+    return initializeGroups(groups)
+  }, [filteredOrders, initializeGroups])
+
+  // Handle date group toggle
+  const handleGroupToggle = (groupKey: string, expanded: boolean) => {
+    setExpanded(groupKey, expanded)
+  }
 
 
 
@@ -273,71 +312,87 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {/* Orders Table */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        {filteredOrders.length === 0 ? (
-          <div className="text-center py-12">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Orders Found</h3>
-            <p className="text-gray-700 mb-6">
-              {orders.length === 0 
-                ? "You haven't created any orders yet. Create your first order to get started."
-                : "No orders match your current search and filter criteria."
-              }
-            </p>
-            {orders.length === 0 && (
-              <button
-                onClick={() => setShowNewOrderModal(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-              >
-                <PlusIcon className="h-4 w-4 mr-2" />
-                Create First Order
-              </button>
-            )}
+
+
+      {/* Orders by Date Groups */}
+      {dateGroups.length === 0 ? (
+        <div className="text-center py-12 bg-white shadow rounded-lg">
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Orders Found</h3>
+          <p className="text-gray-700 mb-6">
+            {orders.length === 0 
+              ? "You haven't created any orders yet. Create your first order to get started."
+              : "No orders match your current search and filter criteria."}
+          </p>
+          <div className="text-xs text-gray-500 mt-4">
+            DEBUG: Total orders: {orders.length}, Filtered: {filteredOrders.length}, Date Groups: {dateGroups.length}
           </div>
-        ) : (
-          <div className="overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Order Details
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Customer
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Product
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Allocation
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                    Due Date
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredOrders.map((order) => (
-                  <ExpandableCustomerOrderRow
-                    key={order.id}
-                    order={order}
-                    onView={handleViewOrder}
-                    onEdit={handleEditOrder}
-                    onDelete={handleDeleteOrder}
-                    onOrderUpdated={loadOrders}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+          {orders.length === 0 && (
+            <button
+              onClick={() => setShowNewOrderModal(true)}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+            >
+              <PlusIcon className="h-4 w-4 mr-2" />
+              Create First Order
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {dateGroups.map((group) => (
+            <DateGroupContainer
+              key={group.key}
+              group={group}
+              onToggle={handleGroupToggle}
+              itemType="orders"
+            >
+              {/* Orders Table for this Date Group */}
+              <div className="bg-white shadow rounded-lg overflow-hidden">
+                <div className="overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Order Details
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Customer
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Product
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Allocation
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Status
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Due Date
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {group.items.map((order) => (
+                        <ExpandableCustomerOrderRow
+                          key={order.id}
+                          order={order}
+                          onView={handleViewOrder}
+                          onEdit={handleEditOrder}
+                          onDelete={handleDeleteOrder}
+                          onOrderUpdated={loadOrders}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </DateGroupContainer>
+          ))}
+        </div>
+      )}
 
       {/* New Order Form */}
-              <NewOrderFormMultiColor
+      <NewOrderFormMultiColor
         isOpen={showNewOrderModal}
         onClose={() => setShowNewOrderModal(false)}
         onOrderCreated={loadOrders}
