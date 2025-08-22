@@ -40,6 +40,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       throw new Error(`Failed to fetch finished fabrics: ${finishedFabricsError.message}`)
     }
 
+    // Fetch yarn stock
+    const { data: yarnStock, error: yarnStockError } = await supabase
+      .from('yarn_stock')
+      .select('*')
+      .order('yarn_type')
+
+    if (yarnStockError) {
+      console.warn('Could not fetch yarn stock:', yarnStockError)
+    }
+
+    // Fetch chemical stock
+    const { data: chemicalStock, error: chemicalStockError } = await supabase
+      .from('chemical_stock')
+      .select('*')
+      .order('chemical_name')
+
+    if (chemicalStockError) {
+      console.warn('Could not fetch chemical stock:', chemicalStockError)
+    }
+
+    // Fetch production batches with related data
+    const { data: productionBatches, error: batchesError } = await supabase
+      .from('production_batches')
+      .select(`
+        *,
+        production_orders (
+          internal_order_number,
+          production_type,
+          customer_orders (
+            internal_order_number,
+            customers (name)
+          )
+        ),
+        base_fabrics:base_fabric_id (name, color),
+        finished_fabrics:finished_fabric_id (name, color, coating_type)
+      `)
+      .order('created_at', { ascending: false })
+      .limit(30)
+
+    if (batchesError) {
+      console.warn('Could not fetch production batches:', batchesError)
+    }
+
     // Fetch recent stock movements (last 50 movements) - optional if table doesn't exist
     let recentMovements = []
     try {
@@ -65,6 +108,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log('Data fetched successfully:', {
       baseFabrics: baseFabrics?.length,
       finishedFabrics: finishedFabrics?.length,
+      yarnStock: yarnStock?.length,
+      chemicalStock: chemicalStock?.length,
+      productionBatches: productionBatches?.length,
       recentMovements: recentMovements?.length
     })
 
@@ -76,6 +122,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const stockData = {
       baseFabrics: baseFabrics || [],
       finishedFabrics: finishedFabrics || [],
+      yarnStock: yarnStock || [],
+      chemicalStock: chemicalStock || [],
+      productionBatches: productionBatches || [],
       recentMovements: recentMovements || []
     }
 
